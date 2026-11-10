@@ -33,8 +33,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -181,18 +184,28 @@ private fun SetupScreen(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Image(
                     painterResource(R.drawable.ic_launcher),
                     contentDescription = "Contexta",
-                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)),
+                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)),
                 )
-                Text("Boas-vindas", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, modifier = Modifier.padding(top = 20.dp))
+                Text(
+                    "Boas-vindas",
+                    color = Ink,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 28.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 20.dp),
+                )
                 Text(
                     "Para começar, informe o endereço do seu Contexta e a chave de acesso.",
                     color = Muted,
                     fontSize = 15.sp,
                     lineHeight = 22.sp,
+                    textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
                 )
                 OutlinedTextField(
@@ -218,7 +231,13 @@ private fun SetupScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (error != null) {
-                    Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
+                    Text(
+                        error!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    )
                 }
                 Spacer(Modifier.height(20.dp))
                 Button(
@@ -267,9 +286,7 @@ private fun HelpScreen(onBack: () -> Unit) {
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        TextButton(onClick = onBack, modifier = Modifier.padding(start = 8.dp, top = 4.dp)) {
-            Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold)
-        }
+        BackButton(onBack, Modifier.padding(start = 8.dp, top = 4.dp))
         Column(
             Modifier
                 .weight(1f)
@@ -290,10 +307,17 @@ private fun HelpScreen(onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-                Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold)
-            }
+            BackButton(onBack, Modifier.fillMaxWidth())
         }
+    }
+}
+
+@Composable
+private fun BackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onBack, modifier = modifier) {
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.size(6.dp))
+        Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold)
     }
 }
 
