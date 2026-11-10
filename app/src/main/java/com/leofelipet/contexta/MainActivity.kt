@@ -35,6 +35,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.MailOutline
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -44,6 +48,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -78,10 +85,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+private enum class HomeTab(val label: String) {
+    Conversas("Conversas"),
+    Contatos("Contatos"),
+    Tarefas("Tarefas"),
+    Busca("Busca"),
+}
+
 private sealed interface Screen {
     data object Setup : Screen
     data object Help : Screen
     data object Inbox : Screen
+    data object More : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -104,12 +119,17 @@ class MainActivity : ComponentActivity() {
                         onHelp = { screen = Screen.Help },
                     ) { screen = Screen.Inbox }
                     Screen.Help -> HelpScreen(onBack = { screen = Screen.Setup })
-                    Screen.Inbox -> InboxScreen(
+                    Screen.Inbox -> HomeScreen(
                         api, prefs,
                         onOpen = { screen = Screen.Thread(it.id, it.displayTitle) },
                         onLogout = { prefs.clear(); screen = Screen.Setup },
                         onUnauthorized = { prefs.clear(); screen = Screen.Setup },
+                        onMore = { screen = Screen.More },
                         installApk = ::installApk,
+                    )
+                    Screen.More -> MoreScreen(
+                        onBack = { screen = Screen.Inbox },
+                        onLogout = { prefs.clear(); screen = Screen.Setup },
                     )
                     is Screen.Thread -> ThreadScreen(
                         api, prefs, current.id, current.title,
@@ -321,6 +341,119 @@ private fun BackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
+@Composable
+private fun HomeScreen(
+    api: Api,
+    prefs: Prefs,
+    onOpen: (Conversation) -> Unit,
+    onLogout: () -> Unit,
+    onUnauthorized: () -> Unit,
+    onMore: () -> Unit,
+    installApk: (File) -> Unit,
+) {
+    var tab by remember { mutableStateOf(HomeTab.Conversas) }
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f)) {
+            when (tab) {
+                HomeTab.Conversas -> InboxScreen(api, prefs, onOpen, onLogout, onUnauthorized, onMore)
+                HomeTab.Contatos, HomeTab.Tarefas, HomeTab.Busca -> ComingSoonScreen(tab.label, onMore, onLogout)
+            }
+        }
+        HomeBottomBar(tab) { tab = it }
+    }
+    GitHubUpdate(api, installApk)
+}
+
+@Composable
+private fun HomeBottomBar(tab: HomeTab, onTab: (HomeTab) -> Unit) {
+    NavigationBar(containerColor = SurfaceWhite, contentColor = Muted) {
+        HomeTab.entries.forEach { item ->
+            val icon = when (item) {
+                HomeTab.Conversas -> Icons.Filled.MailOutline
+                HomeTab.Contatos -> Icons.Filled.Person
+                HomeTab.Tarefas -> Icons.Filled.CheckCircle
+                HomeTab.Busca -> Icons.Filled.Search
+            }
+            NavigationBarItem(
+                selected = tab == item,
+                onClick = { onTab(item) },
+                icon = { Icon(icon, contentDescription = item.label) },
+                label = { Text(item.label) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = Brand,
+                    selectedTextColor = Brand,
+                    indicatorColor = BrandSoft,
+                    unselectedIconColor = Muted,
+                    unselectedTextColor = Muted,
+                ),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ComingSoonScreen(title: String, onMore: () -> Unit, onLogout: () -> Unit) {
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            TopAppBar(
+                title = { Text(title, fontWeight = FontWeight.SemiBold, color = Ink) },
+                actions = {
+                    TextButton(onClick = onMore) { Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
+                    TextButton(onClick = onLogout) { Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold) }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
+            )
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            Text(
+                "Em breve neste app.\nPor enquanto use o painel web.",
+                color = Muted,
+                fontSize = 15.sp,
+                lineHeight = 22.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(24.dp),
+            )
+        }
+    }
+}
+
+private val moreItems = listOf("Visão geral", "Empresas", "Memórias", "Manutenção", "Integrações", "Sistema")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoreScreen(onBack: () -> Unit, onLogout: () -> Unit) {
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            TopAppBar(
+                title = { Text("Mais", fontWeight = FontWeight.SemiBold, color = Ink) },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
+            )
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            moreItems.forEach { label ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(label, color = Ink, fontWeight = FontWeight.SemiBold)
+                    Text("Em breve", color = Muted, fontSize = 13.sp)
+                }
+                HorizontalDivider(color = Line)
+            }
+            TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun InboxScreen(
@@ -329,7 +462,7 @@ private fun InboxScreen(
     onOpen: (Conversation) -> Unit,
     onLogout: () -> Unit,
     onUnauthorized: () -> Unit,
-    installApk: (File) -> Unit,
+    onMore: () -> Unit,
 ) {
     var items by remember { mutableStateOf(listOf<Conversation>()) }
     var cursor by remember { mutableStateOf<String?>(null) }
@@ -378,6 +511,7 @@ private fun InboxScreen(
                 title = { Text("Conversas", fontWeight = FontWeight.SemiBold, color = Ink) },
                 actions = {
                     TextButton(onClick = { reload() }) { Text("Atualizar", color = Brand, fontWeight = FontWeight.SemiBold) }
+                    TextButton(onClick = onMore) { Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
                     TextButton(onClick = onLogout) { Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
@@ -436,14 +570,13 @@ private fun InboxScreen(
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
+                            ) { Text("Mais conversas", color = Brand, fontWeight = FontWeight.SemiBold) }
                         }
                     }
                 }
             }
         }
     }
-    GitHubUpdate(api, installApk)
 }
 
 @Composable

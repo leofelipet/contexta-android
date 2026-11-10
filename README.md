@@ -8,6 +8,7 @@ Não é o site (`contexta-web`). Colar a URL do Next falha.
 
 - Lista e lê conversas
 - Atualiza a lista com o SSE enquanto o app está aberto
+- Abas Conversas, Contatos, Tarefas e Busca (as três últimas ainda em breve; o resto em Mais)
 - Avisa quando há APK novo no **seu** servidor
 
 ## Instalar
