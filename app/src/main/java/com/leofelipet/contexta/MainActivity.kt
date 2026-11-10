@@ -8,9 +8,11 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,10 +27,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -55,9 +57,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -72,6 +77,7 @@ import java.io.File
 
 private sealed interface Screen {
     data object Setup : Screen
+    data object Help : Screen
     data object Inbox : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
@@ -90,7 +96,11 @@ class MainActivity : ComponentActivity() {
                     mutableStateOf<Screen>(if (prefs.configured()) Screen.Inbox else Screen.Setup)
                 }
                 when (val current = screen) {
-                    Screen.Setup -> SetupScreen(api, prefs, ::installApk) { screen = Screen.Inbox }
+                    Screen.Setup -> SetupScreen(
+                        api, prefs, ::installApk,
+                        onHelp = { screen = Screen.Help },
+                    ) { screen = Screen.Inbox }
+                    Screen.Help -> HelpScreen(onBack = { screen = Screen.Setup })
                     Screen.Inbox -> InboxScreen(
                         api, prefs,
                         onOpen = { screen = Screen.Thread(it.id, it.displayTitle) },
@@ -123,7 +133,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SetupScreen(api: Api, prefs: Prefs, installApk: (File) -> Unit, onReady: () -> Unit) {
+private fun SetupScreen(
+    api: Api,
+    prefs: Prefs,
+    installApk: (File) -> Unit,
+    onHelp: () -> Unit,
+    onReady: () -> Unit,
+) {
     var url by remember { mutableStateOf(prefs.baseUrl) }
     var token by remember { mutableStateOf(prefs.token) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -142,82 +158,142 @@ private fun SetupScreen(api: Api, prefs: Prefs, installApk: (File) -> Unit, onRe
                 prefs.token = token.trim()
                 onReady()
             } catch (_: Unauthorized) {
-                error = "Token recusado. Use o API_BEARER_TOKEN do backend Go."
+                error = "Essa chave não foi aceita. Confira se copiou inteira."
             } catch (_: Exception) {
-                error = "Não conectou. Cole a URL do Go (não a do site) e o token."
+                error = "Não foi possível conectar. Confira o endereço e tente de novo."
             } finally {
                 pending = false
             }
         }
     }
 
-    Box(
+    Box(Modifier.fillMaxSize().background(Paper)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding(),
+        ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
+            ) {
+                Image(
+                    painterResource(R.drawable.ic_launcher),
+                    contentDescription = "Contexta",
+                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)),
+                )
+                Text("Boas-vindas", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, modifier = Modifier.padding(top = 20.dp))
+                Text(
+                    "Para começar, informe o endereço do seu Contexta e a chave de acesso.",
+                    color = Muted,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
+                )
+                OutlinedTextField(
+                    url, { url = it },
+                    label = { Text("Endereço") },
+                    placeholder = { Text("https://") },
+                    singleLine = true,
+                    colors = contextaFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    token, { token = it },
+                    label = { Text("Chave de acesso") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = contextaFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { save() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (error != null) {
+                    Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
+                }
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = { save() },
+                    enabled = !pending && url.isNotBlank() && token.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Brand,
+                        contentColor = Color.White,
+                        disabledContainerColor = Brand.copy(alpha = 0.35f),
+                        disabledContentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                    Text(if (pending) "Conectando..." else "Entrar", fontWeight = FontWeight.SemiBold)
+                }
+                TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    Text("Onde encontro esses dados?", color = Brand)
+                }
+            }
+            Text(
+                BuildConfig.VERSION_NAME,
+                color = Muted,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            )
+        }
+        GitHubUpdate(api, installApk)
+    }
+}
+
+@Composable
+private fun HelpScreen(onBack: () -> Unit) {
+    val steps = listOf(
+        "Você precisa de duas coisas: o endereço do Contexta e a chave de acesso.",
+        "O endereço começa com https://. É o servidor, não a página de login do painel no computador.",
+        "A chave de acesso é um texto longo. Quem instalou o Contexta encontra no servidor, no arquivo .env, na linha API_BEARER_TOKEN — copie o que vem depois do =.",
+        "Cole o endereço no primeiro campo e a chave no segundo.",
+        "Toque em Entrar. Se der erro, confira se a chave foi copiada inteira, sem espaço a mais.",
+    )
+    Column(
         Modifier
             .fillMaxSize()
             .background(Paper)
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(20.dp),
-        contentAlignment = Alignment.Center,
+            .navigationBarsPadding(),
     ) {
+        TextButton(onClick = onBack, modifier = Modifier.padding(start = 8.dp, top = 4.dp)) {
+            Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold)
+        }
         Column(
             Modifier
-                .fillMaxWidth()
-                .background(SurfaceWhite, RoundedCornerShape(24.dp))
-                .border(1.dp, Line, RoundedCornerShape(24.dp))
-                .padding(24.dp),
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
-            Box(
-                Modifier.size(44.dp).background(BrandSoft, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("C", color = Brand, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            }
-            Text("Boas-vindas", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, modifier = Modifier.padding(top = 16.dp))
-            Text("Cole a URL do backend Go e o token da API.", color = Muted, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
-            OutlinedTextField(
-                url, { url = it },
-                label = { Text("URL do backend") },
-                placeholder = { Text("https://seu-servidor") },
-                singleLine = true,
-                colors = contextaFieldColors(),
-                shape = RoundedCornerShape(12.dp),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                token, { token = it },
-                label = { Text("API_BEARER_TOKEN") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                colors = contextaFieldColors(),
-                shape = RoundedCornerShape(12.dp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { save() }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (error != null) {
-                Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
-            }
+            Text("Onde encontrar os dados", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 24.sp)
             Spacer(Modifier.height(20.dp))
-            Button(
-                onClick = { save() },
-                enabled = !pending && url.isNotBlank() && token.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Brand,
-                    contentColor = Color.White,
-                    disabledContainerColor = Brand.copy(alpha = 0.35f),
-                    disabledContentColor = Color.White,
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) {
-                Text(if (pending) "Conectando..." else "Entrar", fontWeight = FontWeight.SemiBold)
+            steps.forEachIndexed { index, step ->
+                Row(Modifier.padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(BrandSoft),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("${index + 1}", color = Brand, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                    Text(step, color = Ink, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.weight(1f))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold)
             }
         }
-        GitHubUpdate(api, installApk)
     }
 }
 
