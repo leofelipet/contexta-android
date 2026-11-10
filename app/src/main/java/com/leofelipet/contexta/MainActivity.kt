@@ -9,16 +9,22 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,8 +33,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -36,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,11 +55,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,9 +82,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
         val prefs = Prefs(this)
         setContent {
-            MaterialTheme {
+            ContextaTheme {
                 var screen by remember {
                     mutableStateOf<Screen>(if (prefs.configured()) Screen.Inbox else Screen.Setup)
                 }
@@ -136,28 +151,71 @@ private fun SetupScreen(api: Api, prefs: Prefs, onReady: () -> Unit) {
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().imePadding().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Paper)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(20.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text("Contexta", style = MaterialTheme.typography.headlineMedium)
-        Text("URL do backend Go e o token da API.", Modifier.padding(top = 8.dp, bottom = 24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(
-            url, { url = it }, label = { Text("URL do backend") },
-            placeholder = { Text("https://seu-servidor") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            token, { token = it }, label = { Text("API_BEARER_TOKEN") },
-            singleLine = true, visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { save() }),
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-        )
-        if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp))
-        Button(onClick = { save() }, enabled = !pending && url.isNotBlank() && token.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
-            Text(if (pending) "Conectando..." else "Entrar")
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(SurfaceWhite, RoundedCornerShape(24.dp))
+                .border(1.dp, Line, RoundedCornerShape(24.dp))
+                .padding(24.dp),
+        ) {
+            Box(
+                Modifier.size(44.dp).background(BrandSoft, RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("C", color = Brand, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            }
+            Text("Boas-vindas", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, modifier = Modifier.padding(top = 16.dp))
+            Text("Cole a URL do backend Go e o token da API.", color = Muted, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp))
+            OutlinedTextField(
+                url, { url = it },
+                label = { Text("URL do backend") },
+                placeholder = { Text("https://seu-servidor") },
+                singleLine = true,
+                colors = contextaFieldColors(),
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                token, { token = it },
+                label = { Text("API_BEARER_TOKEN") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                colors = contextaFieldColors(),
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { save() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (error != null) {
+                Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
+            }
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = { save() },
+                enabled = !pending && url.isNotBlank() && token.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Brand,
+                    contentColor = Color.White,
+                    disabledContainerColor = Brand.copy(alpha = 0.35f),
+                    disabledContentColor = Color.White,
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(if (pending) "Conectando..." else "Entrar", fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }
@@ -180,7 +238,7 @@ private fun InboxScreen(
     var update by remember { mutableStateOf<AndroidUpdate?>(null) }
     var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as conversas."
@@ -225,49 +283,71 @@ private fun InboxScreen(
 
     val remote = update
     Scaffold(
+        containerColor = Paper,
         topBar = {
             TopAppBar(
-                title = { Text("Conversas") },
+                title = { Text("Conversas", fontWeight = FontWeight.SemiBold, color = Ink) },
                 actions = {
-                    TextButton(onClick = { reload() }) { Text("Atualizar") }
-                    TextButton(onClick = onLogout) { Text("Sair") }
+                    TextButton(onClick = { reload() }) { Text("Atualizar", color = Brand, fontWeight = FontWeight.SemiBold) }
+                    TextButton(onClick = onLogout) { Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold) }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             OutlinedTextField(
                 query, { query = it },
-                label = { Text("Buscar") }, singleLine = true,
+                label = { Text("Buscar") },
+                singleLine = true,
+                colors = contextaFieldColors(),
+                shape = RoundedCornerShape(12.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { reload() }),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            HorizontalDivider(color = Line)
             if (loading && items.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Brand) }
             } else {
                 if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
-                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                LazyColumn(Modifier.fillMaxSize().background(SurfaceWhite), contentPadding = PaddingValues(bottom = 24.dp)) {
                     items(items, key = { it.id }) { conversation ->
-                        Column(Modifier.fillMaxWidth().clickable { onOpen(conversation) }.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(conversation.displayTitle, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                                Text(formatTimestamp(conversation.lastMessageAt ?: conversation.lastMessage?.timestamp.orEmpty()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.fillMaxWidth().clickable { onOpen(conversation) }) {
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(conversation.displayTitle, color = Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(end = 12.dp))
+                                    Text(
+                                        formatTimestamp(conversation.lastMessageAt ?: conversation.lastMessage?.timestamp.orEmpty()),
+                                        color = Muted,
+                                        fontSize = 12.sp,
+                                    )
+                                }
+                                Text(
+                                    conversation.lastMessage?.displayText().orEmpty(),
+                                    color = Muted,
+                                    fontSize = 14.sp,
+                                    maxLines = 2,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
                             }
-                            Text(conversation.lastMessage?.displayText().orEmpty(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                            HorizontalDivider(color = Line)
                         }
                     }
                     if (cursor != null) {
                         item {
-                            TextButton(onClick = {
-                                scope.launch {
-                                    try {
-                                        fetch(false)
-                                    } catch (e: Exception) {
-                                        fail(e)
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        try {
+                                            fetch(false)
+                                        } catch (e: Exception) {
+                                            fail(e)
+                                        }
                                     }
-                                }
-                            }, modifier = Modifier.fillMaxWidth()) { Text("Mais") }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
                         }
                     }
                 }
@@ -278,8 +358,8 @@ private fun InboxScreen(
     if (remote != null && needsUpdate(BuildConfig.VERSION_CODE, remote.versionCode) && !downloading) {
         AlertDialog(
             onDismissRequest = { update = null },
-            title = { Text("Atualização ${remote.versionName.ifBlank { remote.versionCode.toString() }}") },
-            text = { Text(remote.notes.ifBlank { "Há uma versão nova do app." }) },
+            title = { Text("Atualização ${remote.versionName.ifBlank { remote.versionCode.toString() }}", color = Ink) },
+            text = { Text(remote.notes.ifBlank { "Há uma versão nova do app." }, color = Muted) },
             confirmButton = {
                 TextButton(onClick = {
                     downloading = true
@@ -295,17 +375,19 @@ private fun InboxScreen(
                             update = null
                         }
                     }
-                }) { Text("Atualizar") }
+                }) { Text("Atualizar", color = Brand, fontWeight = FontWeight.SemiBold) }
             },
-            dismissButton = { TextButton(onClick = { update = null }) { Text("Depois") } },
+            dismissButton = { TextButton(onClick = { update = null }) { Text("Depois", color = Muted) } },
+            containerColor = SurfaceWhite,
         )
     }
     if (downloading) {
         AlertDialog(
             onDismissRequest = {},
-            title = { Text("Baixando") },
-            text = { LinearProgressIndicator(Modifier.fillMaxWidth()) },
+            title = { Text("Baixando", color = Ink) },
+            text = { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Brand, trackColor = BrandSoft) },
             confirmButton = {},
+            containerColor = SurfaceWhite,
         )
     }
 }
@@ -359,15 +441,17 @@ private fun ThreadScreen(
     }
 
     Scaffold(
+        containerColor = Chat,
         topBar = {
             TopAppBar(
-                title = { Text(title) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } },
+                title = { Text(title, fontWeight = FontWeight.SemiBold, color = Ink, maxLines = 1) },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
             )
         },
     ) { padding ->
         if (loading && items.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Brand) }
         } else {
             LazyColumn(
                 Modifier.fillMaxSize().padding(padding),
@@ -379,32 +463,33 @@ private fun ThreadScreen(
                     val inbound = message.direction != "outbound"
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (inbound) Arrangement.Start else Arrangement.End) {
                         Column(
-                            Modifier.widthIn(max = 320.dp)
-                                .background(
-                                    if (inbound) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer,
-                                    RoundedCornerShape(16.dp),
-                                )
-                                .padding(12.dp),
+                            Modifier
+                                .widthIn(max = 320.dp)
+                                .background(if (inbound) SurfaceWhite else OutboundBubble, RoundedCornerShape(16.dp))
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
                         ) {
                             if (inbound && !message.sender.isNullOrBlank()) {
-                                Text(message.sender, style = MaterialTheme.typography.labelMedium)
+                                Text(message.sender, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
                             }
-                            Text(message.displayText())
-                            Text(formatTimestamp(message.timestamp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(message.displayText(), color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
+                            Text(formatTimestamp(message.timestamp), color = Muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 4.dp))
                         }
                     }
                 }
                 if (cursor != null) {
                     item {
-                        TextButton(onClick = {
-                            scope.launch {
-                                try {
-                                    fetch(false)
-                                } catch (e: Exception) {
-                                    fail(e)
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    try {
+                                        fetch(false)
+                                    } catch (e: Exception) {
+                                        fail(e)
+                                    }
                                 }
-                            }
-                        }, modifier = Modifier.fillMaxWidth()) { Text("Mais antigas") }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Mais antigas", color = Brand, fontWeight = FontWeight.SemiBold) }
                     }
                 }
                 if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error) }
