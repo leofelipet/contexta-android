@@ -26,10 +26,15 @@ class ParseTest {
     }
 
     @Test
-    fun updateIsNewerOnlyWhenRemoteVersionGrows() {
-        val update = contextaJson.decodeFromString<AndroidUpdate>("""{"version_code":2,"version_name":"1.0.1"}""")
-        assertTrue(needsUpdate(1, update.versionCode))
-        assertFalse(needsUpdate(2, update.versionCode))
+    fun githubReleaseIsNewerByTag() {
+        val release = contextaJson.decodeFromString<GithubRelease>(
+            """{"tag_name":"v1.1.0","assets":[{"name":"app-release.apk","browser_download_url":"https://example/app.apk"}]}""",
+        )
+        assertEquals("1.1.0", release.versionName)
+        assertEquals("https://example/app.apk", release.apkUrl)
+        assertTrue(needsUpdate("1.0.0", release.versionName))
+        assertFalse(needsUpdate("1.1.0", release.versionName))
+        assertTrue(needsUpdate("1.9.0", "1.10.0"))
     }
 
     @Test

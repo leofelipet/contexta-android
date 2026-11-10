@@ -37,21 +37,23 @@ class Api(
         return contextaJson.decodeFromString(get(url.toString(), token))
     }
 
-    fun update(base: String, token: String): AndroidUpdate? {
-        val request = authed(apiUrl(base, "android/update").toString(), token)
+    fun githubLatest(): GithubRelease? {
+        val request = Request.Builder()
+            .url("https://api.github.com/repos/leofelipet/contexta-android/releases/latest")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "Contexta-Android")
+            .build()
         client.newCall(request).execute().use { response ->
-            if (response.code == 401) throw Unauthorized()
             if (response.code == 404) return null
             if (!response.isSuccessful) throw ApiException(response.code)
             return contextaJson.decodeFromString(response.body?.string().orEmpty())
         }
     }
 
-    fun downloadApk(base: String, token: String, dest: File) {
+    fun downloadUrl(url: String, dest: File) {
         dest.parentFile?.mkdirs()
-        val request = authed(apiUrl(base, "android/apk").toString(), token)
+        val request = Request.Builder().url(url).header("User-Agent", "Contexta-Android").build()
         client.newCall(request).execute().use { response ->
-            if (response.code == 401) throw Unauthorized()
             if (!response.isSuccessful) throw ApiException(response.code)
             val body = response.body ?: throw ApiException(response.code)
             dest.outputStream().use { body.byteStream().copyTo(it) }

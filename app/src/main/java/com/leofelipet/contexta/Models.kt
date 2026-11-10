@@ -54,13 +54,32 @@ data class Transcription(
 )
 
 @Serializable
-data class AndroidUpdate(
-    @SerialName("version_code") val versionCode: Int,
-    @SerialName("version_name") val versionName: String = "",
-    val notes: String = "",
+data class GithubRelease(
+    @SerialName("tag_name") val tagName: String = "",
+    val body: String = "",
+    val assets: List<GithubAsset> = emptyList(),
+) {
+    val versionName: String get() = tagName.trim().trimStart('v', 'V')
+    val apkUrl: String? get() = assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }?.url
+}
+
+@Serializable
+data class GithubAsset(
+    val name: String = "",
+    @SerialName("browser_download_url") val url: String = "",
 )
 
-fun needsUpdate(localVersionCode: Int, remoteVersionCode: Int) = remoteVersionCode > localVersionCode
+fun needsUpdate(localVersionName: String, remoteVersionName: String): Boolean {
+    fun parts(value: String) = value.trim().trimStart('v', 'V').split('.').map { it.toIntOrNull() ?: 0 }
+    val local = parts(localVersionName)
+    val remote = parts(remoteVersionName)
+    val size = maxOf(local.size, remote.size)
+    for (index in 0 until size) {
+        val delta = remote.getOrElse(index) { 0 } - local.getOrElse(index) { 0 }
+        if (delta != 0) return delta > 0
+    }
+    return false
+}
 
 fun Message.displayText(): String {
     val transcript = transcription?.text?.trim().orEmpty()

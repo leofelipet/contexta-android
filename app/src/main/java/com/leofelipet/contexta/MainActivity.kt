@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
                     mutableStateOf<Screen>(if (prefs.configured()) Screen.Inbox else Screen.Setup)
                 }
                 when (val current = screen) {
-                    Screen.Setup -> SetupScreen(api, prefs) { screen = Screen.Inbox }
+                    Screen.Setup -> SetupScreen(api, prefs, ::installApk) { screen = Screen.Inbox }
                     Screen.Inbox -> InboxScreen(
                         api, prefs,
                         onOpen = { screen = Screen.Thread(it.id, it.displayTitle) },
@@ -123,7 +123,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SetupScreen(api: Api, prefs: Prefs, onReady: () -> Unit) {
+private fun SetupScreen(api: Api, prefs: Prefs, installApk: (File) -> Unit, onReady: () -> Unit) {
     var url by remember { mutableStateOf(prefs.baseUrl) }
     var token by remember { mutableStateOf(prefs.token) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -217,6 +217,7 @@ private fun SetupScreen(api: Api, prefs: Prefs, onReady: () -> Unit) {
                 Text(if (pending) "Conectando..." else "Entrar", fontWeight = FontWeight.SemiBold)
             }
         }
+        GitHubUpdate(api, installApk)
     }
 }
 
@@ -235,10 +236,7 @@ private fun InboxScreen(
     var query by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var update by remember { mutableStateOf<AndroidUpdate?>(null) }
-    var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as conversas."
@@ -273,15 +271,6 @@ private fun InboxScreen(
         onDispose { source.cancel() }
     }
 
-    LaunchedEffect(prefs.baseUrl, prefs.token) {
-        update = try {
-            withContext(Dispatchers.IO) { api.update(prefs.baseUrl, prefs.token) }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    val remote = update
     Scaffold(
         containerColor = Paper,
         topBar = {
@@ -354,30 +343,49 @@ private fun InboxScreen(
             }
         }
     }
+    GitHubUpdate(api, installApk)
+}
 
-    if (remote != null && needsUpdate(BuildConfig.VERSION_CODE, remote.versionCode) && !downloading) {
+@Composable
+private fun GitHubUpdate(api: Api, installApk: (File) -> Unit) {
+    var remote by remember { mutableStateOf<GithubRelease?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    var dismissed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        remote = try {
+            withContext(Dispatchers.IO) { api.githubLatest() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    val release = remote
+    val apkUrl = release?.apkUrl
+    if (!dismissed && !downloading && release != null && apkUrl != null && needsUpdate(BuildConfig.VERSION_NAME, release.versionName)) {
         AlertDialog(
-            onDismissRequest = { update = null },
-            title = { Text("Atualização ${remote.versionName.ifBlank { remote.versionCode.toString() }}", color = Ink) },
-            text = { Text(remote.notes.ifBlank { "Há uma versão nova do app." }, color = Muted) },
+            onDismissRequest = { dismissed = true },
+            title = { Text("Atualização ${release.versionName}", color = Ink) },
+            text = { Text(release.body.ifBlank { "Há uma versão nova do app." }, color = Muted) },
             confirmButton = {
                 TextButton(onClick = {
                     downloading = true
                     scope.launch {
                         try {
                             val file = File(context.cacheDir, "updates/app.apk")
-                            withContext(Dispatchers.IO) { api.downloadApk(prefs.baseUrl, prefs.token, file) }
+                            withContext(Dispatchers.IO) { api.downloadUrl(apkUrl, file) }
                             installApk(file)
                         } catch (_: Exception) {
-                            error = "Não foi possível baixar a atualização."
+                            dismissed = true
                         } finally {
                             downloading = false
-                            update = null
                         }
                     }
                 }) { Text("Atualizar", color = Brand, fontWeight = FontWeight.SemiBold) }
             },
-            dismissButton = { TextButton(onClick = { update = null }) { Text("Depois", color = Muted) } },
+            dismissButton = { TextButton(onClick = { dismissed = true }) { Text("Depois", color = Muted) } },
             containerColor = SurfaceWhite,
         )
     }
