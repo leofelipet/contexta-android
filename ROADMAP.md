@@ -27,3 +27,5 @@ Não clonar 1:1: passkeys, gráficos, cliente de e-mail, enviar WhatsApp (não t
 | 17 | Só se doer | SSE incremental, mídia, enviar WhatsApp, FCM |
 
 Ordem: 1–6 = web mobile. 7–12 = organização. 13–16 = painel. 17 opcional.
+
+Antes da 2: voltar do sistema, cache em memória, skeleton, scroll infinito, separador de dia, fundo do chat, ícones.

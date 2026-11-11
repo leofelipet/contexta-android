@@ -20,7 +20,7 @@ class Api(
 ) {
     fun conversations(base: String, token: String, cursor: String? = null, query: String = ""): ConversationPage {
         val url = apiUrl(base, "conversations").newBuilder()
-            .addQueryParameter("limit", "50")
+            .addQueryParameter("limit", "20")
             .apply {
                 if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
                 if (query.isNotBlank()) addQueryParameter("query", query)
@@ -31,7 +31,7 @@ class Api(
 
     fun messages(base: String, token: String, conversationId: String, cursor: String? = null): MessagePage {
         val url = apiUrl(base, "conversations/$conversationId/messages").newBuilder()
-            .addQueryParameter("limit", "50")
+            .addQueryParameter("limit", "20")
             .apply { if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor) }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))

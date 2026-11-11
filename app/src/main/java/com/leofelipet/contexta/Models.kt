@@ -3,6 +3,12 @@ package com.leofelipet.contexta
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 val contextaJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
@@ -95,10 +101,91 @@ fun Preview.displayText(): String {
     return if (type.equals("audio", ignoreCase = true)) "[Áudio]" else type
 }
 
+private val months = arrayOf(
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+)
+
+fun parseInstant(iso: String, zone: ZoneId = ZoneId.systemDefault()): Instant? {
+    if (iso.isBlank()) return null
+    try {
+        return Instant.parse(iso)
+    } catch (_: Exception) {
+    }
+    try {
+        return OffsetDateTime.parse(iso).toInstant()
+    } catch (_: Exception) {
+    }
+    return try {
+        LocalDateTime.parse(iso).atZone(zone).toInstant()
+    } catch (_: Exception) {
+        null
+    }
+}
+
+fun localDateOf(iso: String, zone: ZoneId = ZoneId.systemDefault()): LocalDate? {
+    val instant = parseInstant(iso, zone)
+    if (instant != null) return instant.atZone(zone).toLocalDate()
+    if (iso.length < 10) return null
+    return try {
+        LocalDate.parse(iso.take(10))
+    } catch (_: Exception) {
+        null
+    }
+}
+
+fun dayLabel(iso: String, today: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): String {
+    val date = localDateOf(iso, zone) ?: return ""
+    return when (date) {
+        today -> "Hoje"
+        today.minusDays(1) -> "Ontem"
+        else -> {
+            val base = "${date.dayOfMonth} de ${months[date.monthValue - 1]}"
+            if (date.year == today.year) base else "$base de ${date.year}"
+        }
+    }
+}
+
+fun sameDay(a: String, b: String, zone: ZoneId = ZoneId.systemDefault()): Boolean {
+    val left = localDateOf(a, zone) ?: return false
+    val right = localDateOf(b, zone) ?: return false
+    return left == right
+}
+
+fun showDayChip(current: String, older: String?, zone: ZoneId = ZoneId.systemDefault()): Boolean {
+    if (localDateOf(current, zone) == null) return false
+    if (older == null) return true
+    return !sameDay(current, older, zone)
+}
+
+fun formatClock(iso: String, zone: ZoneId = ZoneId.systemDefault()): String {
+    val instant = parseInstant(iso, zone) ?: return if (iso.length >= 16) iso.substring(11, 16) else iso
+    return DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(instant)
+}
+
+fun formatListTime(iso: String, today: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): String {
+    val date = localDateOf(iso, zone) ?: return formatTimestamp(iso)
+    return when (date) {
+        today -> formatClock(iso, zone)
+        today.minusDays(1) -> "Ontem"
+        else -> date.format(DateTimeFormatter.ofPattern("dd/MM"))
+    }
+}
+
 fun formatTimestamp(iso: String): String {
     if (iso.length < 16) return iso
     return iso.substring(8, 10) + "/" + iso.substring(5, 7) + " " + iso.substring(11, 16)
 }
+
+/** 15th row of a 20-row page, and the same distance from the end on the next pages. */
+fun shouldPrefetch(lastVisible: Int, count: Int): Boolean {
+    if (count <= 0 || lastVisible < 0) return false
+    if (lastVisible < count - 6) return false
+    return lastVisible >= 14 || lastVisible >= count - 1
+}
+
+fun shouldLoadOlder(maxVisible: Int, count: Int): Boolean =
+    count > 0 && maxVisible >= count - 3
 
 fun normalizeBaseUrl(raw: String): String {
     var value = raw.trim()

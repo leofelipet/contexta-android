@@ -6,19 +6,25 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,25 +33,39 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MailOutline
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -65,31 +85,37 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private enum class HomeTab(val label: String) {
-    Conversas("Conversas"),
-    Contatos("Contatos"),
-    Tarefas("Tarefas"),
-    Busca("Busca"),
+private enum class HomeTab(val label: String, val icon: ImageVector) {
+    Conversas("Conversas", Icons.Filled.MailOutline),
+    Contatos("Contatos", Icons.Filled.Person),
+    Tarefas("Tarefas", Icons.Filled.CheckCircle),
+    Busca("Busca", Icons.Filled.Search),
 }
 
 private sealed interface Screen {
@@ -110,31 +136,40 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         setContent {
             ContextaTheme {
-                var screen by remember {
-                    mutableStateOf<Screen>(if (prefs.configured()) Screen.Inbox else Screen.Setup)
+                var cache by remember { mutableStateOf(SessionCache()) }
+                var stack by remember {
+                    mutableStateOf(listOf<Screen>(if (prefs.configured()) Screen.Inbox else Screen.Setup))
                 }
-                when (val current = screen) {
+                var tab by remember { mutableStateOf(HomeTab.Conversas) }
+                fun back() {
+                    if (stack.size > 1) stack = stack.dropLast(1)
+                }
+                fun leave() {
+                    prefs.clear()
+                    cache = SessionCache()
+                    tab = HomeTab.Conversas
+                    stack = listOf(Screen.Setup)
+                }
+                BackHandler(enabled = stack.size > 1) { back() }
+                when (val current = stack.last()) {
                     Screen.Setup -> SetupScreen(
                         api, prefs, ::installApk,
-                        onHelp = { screen = Screen.Help },
-                    ) { screen = Screen.Inbox }
-                    Screen.Help -> HelpScreen(onBack = { screen = Screen.Setup })
+                        onHelp = { stack = stack + Screen.Help },
+                    ) { stack = listOf(Screen.Inbox) }
+                    Screen.Help -> HelpScreen(onBack = ::back)
                     Screen.Inbox -> HomeScreen(
-                        api, prefs,
-                        onOpen = { screen = Screen.Thread(it.id, it.displayTitle) },
-                        onLogout = { prefs.clear(); screen = Screen.Setup },
-                        onUnauthorized = { prefs.clear(); screen = Screen.Setup },
-                        onMore = { screen = Screen.More },
+                        api, prefs, cache, tab,
+                        onTab = { tab = it },
+                        onOpen = { stack = stack + Screen.Thread(it.id, it.displayTitle) },
+                        onUnauthorized = ::leave,
+                        onMore = { stack = stack + Screen.More },
                         installApk = ::installApk,
                     )
-                    Screen.More -> MoreScreen(
-                        onBack = { screen = Screen.Inbox },
-                        onLogout = { prefs.clear(); screen = Screen.Setup },
-                    )
+                    Screen.More -> MoreScreen(onBack = ::back, onLogout = ::leave)
                     is Screen.Thread -> ThreadScreen(
-                        api, prefs, current.id, current.title,
-                        onBack = { screen = Screen.Inbox },
-                        onUnauthorized = { prefs.clear(); screen = Screen.Setup },
+                        api, prefs, cache, current.id, current.title,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
                     )
                 }
             }
@@ -306,7 +341,9 @@ private fun HelpScreen(onBack: () -> Unit) {
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        BackButton(onBack, Modifier.padding(start = 8.dp, top = 4.dp))
+        IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Ink)
+        }
         Column(
             Modifier
                 .weight(1f)
@@ -326,18 +363,7 @@ private fun HelpScreen(onBack: () -> Unit) {
                     Text(step, color = Ink, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.weight(1f))
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            BackButton(onBack, Modifier.fillMaxWidth())
         }
-    }
-}
-
-@Composable
-private fun BackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
-    TextButton(onClick = onBack, modifier = modifier) {
-        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.size(6.dp))
-        Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -345,236 +371,361 @@ private fun BackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
 private fun HomeScreen(
     api: Api,
     prefs: Prefs,
+    cache: SessionCache,
+    tab: HomeTab,
+    onTab: (HomeTab) -> Unit,
     onOpen: (Conversation) -> Unit,
-    onLogout: () -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
     installApk: (File) -> Unit,
 ) {
-    var tab by remember { mutableStateOf(HomeTab.Conversas) }
-    Column(Modifier.fillMaxSize()) {
+    BackHandler(enabled = tab != HomeTab.Conversas) { onTab(HomeTab.Conversas) }
+    Column(Modifier.fillMaxSize().background(Paper)) {
         Box(Modifier.weight(1f)) {
             when (tab) {
-                HomeTab.Conversas -> InboxScreen(api, prefs, onOpen, onLogout, onUnauthorized, onMore)
-                HomeTab.Contatos, HomeTab.Tarefas, HomeTab.Busca -> ComingSoonScreen(tab.label, onMore, onLogout)
+                HomeTab.Conversas -> InboxScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
+                else -> ComingSoonScreen(tab, onMore)
             }
         }
-        HomeBottomBar(tab) { tab = it }
+        HomeBottomBar(tab, onTab)
     }
     GitHubUpdate(api, installApk)
 }
 
 @Composable
 private fun HomeBottomBar(tab: HomeTab, onTab: (HomeTab) -> Unit) {
-    NavigationBar(containerColor = SurfaceWhite, contentColor = Muted) {
-        HomeTab.entries.forEach { item ->
-            val icon = when (item) {
-                HomeTab.Conversas -> Icons.Filled.MailOutline
-                HomeTab.Contatos -> Icons.Filled.Person
-                HomeTab.Tarefas -> Icons.Filled.CheckCircle
-                HomeTab.Busca -> Icons.Filled.Search
+    Column(Modifier.background(SurfaceWhite)) {
+        HorizontalDivider(color = Line)
+        NavigationBar(containerColor = SurfaceWhite, contentColor = Muted, tonalElevation = 0.dp) {
+            HomeTab.entries.forEach { item ->
+                NavigationBarItem(
+                    selected = tab == item,
+                    onClick = { onTab(item) },
+                    icon = { Icon(item.icon, contentDescription = item.label) },
+                    label = { Text(item.label) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Brand,
+                        selectedTextColor = Brand,
+                        indicatorColor = BrandSoft,
+                        unselectedIconColor = Muted,
+                        unselectedTextColor = Muted,
+                    ),
+                )
             }
-            NavigationBarItem(
-                selected = tab == item,
-                onClick = { onTab(item) },
-                icon = { Icon(icon, contentDescription = item.label) },
-                label = { Text(item.label) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = Brand,
-                    selectedTextColor = Brand,
-                    indicatorColor = BrandSoft,
-                    unselectedIconColor = Muted,
-                    unselectedTextColor = Muted,
-                ),
-            )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ComingSoonScreen(title: String, onMore: () -> Unit, onLogout: () -> Unit) {
+private fun ComingSoonScreen(tab: HomeTab, onMore: () -> Unit) {
     Scaffold(
         containerColor = Paper,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0), // above HomeBottomBar; default insets leave a blank strip
         topBar = {
-            TopAppBar(
-                title = { Text(title, fontWeight = FontWeight.SemiBold, color = Ink) },
-                actions = {
-                    TextButton(onClick = onMore) { Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
-                    TextButton(onClick = onLogout) { Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold) }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
-            )
+            ContextaBar(tab.label) {
+                IconButton(onClick = onMore) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Mais", tint = Ink)
+                }
+            }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                Modifier.size(64.dp).clip(CircleShape).background(BrandSoft),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(tab.icon, contentDescription = null, tint = Brand, modifier = Modifier.size(28.dp))
+            }
+            Text(tab.label, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, modifier = Modifier.padding(top = 16.dp))
             Text(
                 "Em breve neste app.\nPor enquanto use o painel web.",
                 color = Muted,
                 fontSize = 15.sp,
                 lineHeight = 22.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
     }
 }
 
-private val moreItems = listOf("Visão geral", "Empresas", "Memórias", "Manutenção", "Integrações", "Sistema")
+private data class MoreItem(val label: String, val icon: ImageVector)
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val moreItems = listOf(
+    MoreItem("Visão geral", Icons.Filled.Home),
+    MoreItem("Empresas", Icons.Filled.AccountBox),
+    MoreItem("Memórias", Icons.Filled.Star),
+    MoreItem("Manutenção", Icons.Filled.Build),
+    MoreItem("Integrações", Icons.Filled.Share),
+    MoreItem("Sistema", Icons.Filled.Settings),
+)
+
 @Composable
 private fun MoreScreen(onBack: () -> Unit, onLogout: () -> Unit) {
     Scaffold(
         containerColor = Paper,
-        topBar = {
-            TopAppBar(
-                title = { Text("Mais", fontWeight = FontWeight.SemiBold, color = Ink) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
-            )
-        },
+        topBar = { ContextaBar("Mais", onBack) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
-            moreItems.forEach { label ->
+            Text(
+                "Painel",
+                color = Muted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+            )
+            moreItems.forEach { item ->
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(label, color = Ink, fontWeight = FontWeight.SemiBold)
-                    Text("Em breve", color = Muted, fontSize = 13.sp)
+                    Box(
+                        Modifier.size(36.dp).clip(CircleShape).background(BrandSoft),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(item.icon, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(item.label, color = Ink, fontWeight = FontWeight.SemiBold)
+                        Text("Em breve", color = Muted, fontSize = 12.sp)
+                    }
                 }
-                HorizontalDivider(color = Line)
+                HorizontalDivider(Modifier.padding(start = 64.dp), color = Line)
             }
-            TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onLogout)
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = Muted)
+                Text("Sair", color = Ink, fontWeight = FontWeight.SemiBold)
             }
+            Text(
+                "Versão ${BuildConfig.VERSION_NAME}",
+                color = Muted,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun InboxScreen(
     api: Api,
     prefs: Prefs,
+    cache: SessionCache,
     onOpen: (Conversation) -> Unit,
-    onLogout: () -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
 ) {
-    var items by remember { mutableStateOf(listOf<Conversation>()) }
-    var cursor by remember { mutableStateOf<String?>(null) }
-    var query by remember { mutableStateOf("") }
+    var items by remember { mutableStateOf(cache.conversations) }
+    var cursor by remember { mutableStateOf(cache.conversationCursor) }
+    var query by remember { mutableStateOf(cache.conversationQuery) }
     var error by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(!cache.conversationsReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val hasRows = remember { booleanArrayOf(cache.conversations.isNotEmpty()) }
     val scope = rememberCoroutineScope()
+    val listState = cache.conversationListState
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as conversas."
     }
 
-    suspend fun fetch(reset: Boolean) {
-        val page = withContext(Dispatchers.IO) {
-            api.conversations(prefs.baseUrl, prefs.token, cursor = if (reset) null else cursor, query = query)
-        }
-        items = if (reset) page.data else items + page.data.filter { next -> items.none { it.id == next.id } }
-        cursor = page.nextCursor
-    }
-
-    fun reload() {
+    fun loadMore() {
+        val next = cache.conversationCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val q = cache.conversationQuery
         scope.launch {
-            loading = true
-            error = null
             try {
-                fetch(true)
+                val page = withContext(Dispatchers.IO) {
+                    api.conversations(prefs.baseUrl, prefs.token, cursor = next, query = q)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.conversationCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.conversations + page.data.filter { row -> cache.conversations.none { it.id == row.id } }
+                cache.conversations = merged
+                cache.conversationCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+                hasRows[0] = merged.isNotEmpty()
             } catch (e: Exception) {
-                fail(e)
+                if (mine == ticket[0]) fail(e)
             } finally {
-                loading = false
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
             }
         }
     }
 
-    LaunchedEffect(prefs.baseUrl, prefs.token) { reload() }
+    fun reload(q: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            if (!hasRows[0]) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.conversations(prefs.baseUrl, prefs.token, query = q)
+                }
+                if (mine != ticket[0]) return@launch
+                val sameQuery = q == cache.conversationQuery
+                val hadMore = sameQuery && cache.conversations.size > page.data.size
+                val freshIds = page.data.map { it.id }.toSet()
+                val merged = if (hadMore) {
+                    page.data + cache.conversations.filter { it.id !in freshIds }
+                } else {
+                    page.data
+                }
+                if (!sameQuery) listState.scrollToItem(0)
+                cache.conversationQuery = q
+                cache.conversations = merged
+                if (!hadMore) cache.conversationCursor = page.nextCursor
+                cache.conversationsReady = true
+                items = merged
+                cursor = cache.conversationCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                    val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    if (shouldPrefetch(last, cache.conversations.size) && cache.conversationCursor != null) loadMore()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(query) {
+        val warm = cache.conversationsReady && cache.conversationQuery == query
+        if (!warm && query.isNotEmpty()) delay(300)
+        reload(query)
+    }
+
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
 
     DisposableEffect(prefs.baseUrl, prefs.token) {
-        val source = api.events(prefs.baseUrl, prefs.token) { reload() }
+        val source = api.events(prefs.baseUrl, prefs.token) { reload(cache.conversationQuery) }
         onDispose { source.cancel() }
     }
 
     Scaffold(
         containerColor = Paper,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0), // above HomeBottomBar; default insets leave a blank strip
         topBar = {
-            TopAppBar(
-                title = { Text("Conversas", fontWeight = FontWeight.SemiBold, color = Ink) },
-                actions = {
-                    TextButton(onClick = { reload() }) { Text("Atualizar", color = Brand, fontWeight = FontWeight.SemiBold) }
-                    TextButton(onClick = onMore) { Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
-                    TextButton(onClick = onLogout) { Text("Sair", color = Muted, fontWeight = FontWeight.SemiBold) }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
-            )
+            ContextaBar("Conversas") {
+                IconButton(onClick = { reload(query) }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Atualizar", tint = Ink)
+                }
+                IconButton(onClick = onMore) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Mais", tint = Ink)
+                }
+            }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
             OutlinedTextField(
-                query, { query = it },
-                label = { Text("Buscar") },
+                query,
+                { query = it },
+                placeholder = { Text("Buscar conversa") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Muted) },
+                trailingIcon = if (query.isBlank()) {
+                    null
+                } else {
+                    {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Limpar", tint = Muted)
+                        }
+                    }
+                },
                 singleLine = true,
                 colors = contextaFieldColors(),
                 shape = RoundedCornerShape(12.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { reload() }),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            HorizontalDivider(color = Line)
-            if (loading && items.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Brand) }
-            } else {
-                if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
-                LazyColumn(Modifier.fillMaxSize().background(SurfaceWhite), contentPadding = PaddingValues(bottom = 24.dp)) {
+            when {
+                loading && items.isEmpty() -> ConversationSkeleton()
+                items.isEmpty() -> EmptyHint(
+                    Icons.Filled.MailOutline,
+                    error ?: if (query.isBlank()) "Nenhuma conversa ainda" else "Nenhuma conversa encontrada",
+                )
+                else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
                     items(items, key = { it.id }) { conversation ->
-                        Column(Modifier.fillMaxWidth().clickable { onOpen(conversation) }) {
-                            Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(conversation.displayTitle, color = Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(end = 12.dp))
-                                    Text(
-                                        formatTimestamp(conversation.lastMessageAt ?: conversation.lastMessage?.timestamp.orEmpty()),
-                                        color = Muted,
-                                        fontSize = 12.sp,
-                                    )
-                                }
-                                Text(
-                                    conversation.lastMessage?.displayText().orEmpty(),
-                                    color = Muted,
-                                    fontSize = 14.sp,
-                                    maxLines = 2,
-                                    modifier = Modifier.padding(top = 4.dp),
-                                )
-                            }
-                            HorizontalDivider(color = Line)
-                        }
+                        ConversationRow(conversation) { onOpen(conversation) }
+                        HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
                     }
-                    if (cursor != null) {
-                        item {
-                            TextButton(
-                                onClick = {
-                                    scope.launch {
-                                        try {
-                                            fetch(false)
-                                        } catch (e: Exception) {
-                                            fail(e)
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Mais conversas", color = Brand, fontWeight = FontWeight.SemiBold) }
-                        }
-                    }
+                    if (loadingMore) item { ConversationSkeleton(rows = 2) }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ConversationRow(conversation: Conversation, onOpen: () -> Unit) {
+    val whenLabel = formatListTime(conversation.lastMessageAt ?: conversation.lastMessage?.timestamp.orEmpty())
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        InitialAvatar(conversation.displayTitle)
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    conversation.displayTitle,
+                    color = Ink,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                )
+                if (whenLabel.isNotBlank()) Text(whenLabel, color = Muted, fontSize = 12.sp)
+            }
+            Text(
+                conversation.lastMessage?.displayText().orEmpty().ifBlank { "Sem mensagens" },
+                color = Muted,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
     }
 }
@@ -633,49 +784,109 @@ private fun GitHubUpdate(api: Api, installApk: (File) -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ThreadScreen(
     api: Api,
     prefs: Prefs,
+    cache: SessionCache,
     conversationId: String,
     title: String,
     onBack: () -> Unit,
     onUnauthorized: () -> Unit,
 ) {
-    var items by remember { mutableStateOf(listOf<Message>()) }
-    var cursor by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    val thread = remember(conversationId) { cache.threads.getOrPut(conversationId) { ThreadCache() } }
+    var items by remember(conversationId) { mutableStateOf(thread.items) }
+    var cursor by remember(conversationId) { mutableStateOf(thread.cursor) }
+    var error by remember(conversationId) { mutableStateOf<String?>(null) }
+    var loading by remember(conversationId) { mutableStateOf(thread.items.isEmpty()) }
+    var loadingMore by remember(conversationId) { mutableStateOf(false) }
+    val paging = remember(conversationId) { booleanArrayOf(false) }
+    val ticket = remember(conversationId) { intArrayOf(0) }
+    val hasRows = remember(conversationId) { booleanArrayOf(thread.items.isNotEmpty()) }
     val scope = rememberCoroutineScope()
+    val listState = thread.listState
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as mensagens."
     }
 
-    suspend fun fetch(reset: Boolean) {
-        val page = withContext(Dispatchers.IO) {
-            api.messages(prefs.baseUrl, prefs.token, conversationId, cursor = if (reset) null else cursor)
+    fun loadOlder() {
+        val next = thread.cursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.messages(prefs.baseUrl, prefs.token, conversationId, cursor = next)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cursor = null
+                    thread.cursor = null
+                    return@launch
+                }
+                val merged = thread.items + page.data.filter { row -> thread.items.none { it.id == row.id } }
+                items = merged
+                cursor = page.nextCursor
+                thread.items = merged
+                thread.cursor = page.nextCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
         }
-        items = if (reset) page.data else items + page.data.filter { next -> items.none { it.id == next.id } }
-        cursor = page.nextCursor
     }
 
     fun reload() {
+        val mine = ++ticket[0]
+        paging[0] = true
         scope.launch {
-            loading = true
+            if (!hasRows[0]) loading = true
             error = null
+            val atBottom = listState.firstVisibleItemIndex == 0
             try {
-                fetch(true)
+                val page = withContext(Dispatchers.IO) {
+                    api.messages(prefs.baseUrl, prefs.token, conversationId)
+                }
+                if (mine != ticket[0]) return@launch
+                val freshIds = page.data.map { it.id }.toSet()
+                val hadOlder = thread.items.any { old -> old.id !in freshIds }
+                val merged = page.data + thread.items.filter { it.id !in freshIds }
+                items = merged
+                if (!hadOlder) cursor = page.nextCursor
+                thread.items = merged
+                thread.cursor = cursor
+                hasRows[0] = merged.isNotEmpty()
+                if (atBottom) listState.scrollToItem(0)
             } catch (e: Exception) {
-                fail(e)
+                if (mine == ticket[0]) fail(e)
             } finally {
-                loading = false
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                    val max = listState.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
+                    if (thread.cursor != null && shouldLoadOlder(max, thread.items.size)) loadOlder()
+                }
             }
         }
     }
 
     LaunchedEffect(conversationId) { reload() }
+    LaunchedEffect(listState, conversationId) {
+        snapshotFlow {
+            val max = listState.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
+            Triple(max, items.size, cursor)
+        }.collect { (max, count, next) ->
+            if (next != null && shouldLoadOlder(max, count)) loadOlder()
+        }
+    }
     DisposableEffect(conversationId, prefs.baseUrl, prefs.token) {
         val source = api.events(prefs.baseUrl, prefs.token) { reload() }
         onDispose { source.cancel() }
@@ -683,58 +894,178 @@ private fun ThreadScreen(
 
     Scaffold(
         containerColor = Chat,
-        topBar = {
-            TopAppBar(
-                title = { Text(title, fontWeight = FontWeight.SemiBold, color = Ink, maxLines = 1) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Voltar", color = Brand, fontWeight = FontWeight.SemiBold) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
-            )
-        },
+        topBar = { ContextaBar(title, onBack) },
     ) { padding ->
-        if (loading && items.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Brand) }
-        } else {
-            LazyColumn(
-                Modifier.fillMaxSize().padding(padding),
-                reverseLayout = true,
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(items, key = { it.id }) { message ->
-                    val inbound = message.direction != "outbound"
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (inbound) Arrangement.Start else Arrangement.End) {
-                        Column(
-                            Modifier
-                                .widthIn(max = 320.dp)
-                                .background(if (inbound) SurfaceWhite else OutboundBubble, RoundedCornerShape(16.dp))
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                        ) {
-                            if (inbound && !message.sender.isNullOrBlank()) {
-                                Text(message.sender, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            Image(
+                painterResource(R.drawable.chat_bg),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+            when {
+                loading && items.isEmpty() -> MessageSkeleton()
+                items.isEmpty() -> EmptyHint(Icons.Filled.MailOutline, error ?: "Ainda não há mensagens")
+                else -> LazyColumn(
+                    Modifier.fillMaxSize(),
+                    state = listState,
+                    reverseLayout = true,
+                    contentPadding = PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    itemsIndexed(items, key = { _, message -> message.id }) { index, message ->
+                        val older = items.getOrNull(index + 1)?.timestamp
+                        Column(Modifier.fillMaxWidth()) {
+                            if (showDayChip(message.timestamp, older)) {
+                                DayChip(dayLabel(message.timestamp))
                             }
-                            Text(message.displayText(), color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
-                            Text(formatTimestamp(message.timestamp), color = Muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.End).padding(top = 4.dp))
+                            Bubble(message)
                         }
                     }
-                }
-                if (cursor != null) {
-                    item {
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    try {
-                                        fetch(false)
-                                    } catch (e: Exception) {
-                                        fail(e)
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Mais antigas", color = Brand, fontWeight = FontWeight.SemiBold) }
+                    if (loadingMore) {
+                        item {
+                            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                Bone(Modifier.fillMaxWidth(0.4f).height(36.dp).clip(RoundedCornerShape(16.dp)))
+                            }
+                        }
                     }
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error) }
                 }
-                if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error) }
             }
         }
     }
+}
+
+@Composable
+private fun Bubble(message: Message) {
+    val inbound = message.direction != "outbound"
+    val shape = RoundedCornerShape(
+        topStart = if (inbound) 4.dp else 16.dp,
+        topEnd = if (inbound) 16.dp else 4.dp,
+        bottomEnd = 16.dp,
+        bottomStart = 16.dp,
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (inbound) Arrangement.Start else Arrangement.End) {
+        Column(
+            Modifier
+                .widthIn(max = 300.dp)
+                .clip(shape)
+                .background(if (inbound) SurfaceWhite else OutboundBubble)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            if (inbound && !message.sender.isNullOrBlank()) {
+                Text(message.sender, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            }
+            Text(message.displayText(), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
+            Text(
+                formatClock(message.timestamp),
+                color = Muted,
+                fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun DayChip(label: String) {
+    if (label.isBlank()) return
+    Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
+        Text(
+            label,
+            color = Ink,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(SurfaceWhite.copy(alpha = 0.92f))
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun InitialAvatar(name: String) {
+    val letter = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    Box(Modifier.size(44.dp).clip(CircleShape).background(BrandSoft), contentAlignment = Alignment.Center) {
+        Text(letter, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    }
+}
+
+@Composable
+private fun EmptyHint(icon: ImageVector, message: String) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(icon, contentDescription = null, tint = Brand, modifier = Modifier.size(28.dp))
+        Text(message, color = Muted, fontSize = 15.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
+    }
+}
+
+@Composable
+private fun ConversationSkeleton(rows: Int = 8) {
+    Column(Modifier.fillMaxWidth().background(SurfaceWhite)) {
+        repeat(rows) {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Bone(Modifier.size(44.dp).clip(CircleShape))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Bone(Modifier.fillMaxWidth(0.42f).height(14.dp).clip(RoundedCornerShape(6.dp)))
+                    Bone(Modifier.fillMaxWidth(0.78f).height(12.dp).clip(RoundedCornerShape(6.dp)))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageSkeleton() {
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+    ) {
+        Bone(Modifier.fillMaxWidth(0.62f).height(52.dp).clip(RoundedCornerShape(16.dp)))
+        Bone(Modifier.align(Alignment.End).fillMaxWidth(0.48f).height(40.dp).clip(RoundedCornerShape(16.dp)))
+        Bone(Modifier.fillMaxWidth(0.7f).height(64.dp).clip(RoundedCornerShape(16.dp)))
+    }
+}
+
+@Composable
+private fun Bone(modifier: Modifier) {
+    val transition = rememberInfiniteTransition(label = "bone")
+    val alpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 700), RepeatMode.Reverse),
+        label = "alpha",
+    )
+    Box(modifier.background(Line.copy(alpha = alpha)))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ContextaBar(
+    title: String,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    TopAppBar(
+        title = {
+            Text(title, fontWeight = FontWeight.SemiBold, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        navigationIcon = {
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Ink)
+                }
+            }
+        },
+        actions = actions,
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite, titleContentColor = Ink),
+    )
 }
