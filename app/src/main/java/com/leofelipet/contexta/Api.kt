@@ -96,6 +96,27 @@ class Api(
     fun dashboard(base: String, token: String): Dashboard =
         contextaJson.decodeFromString(get(apiUrl(base, "dashboard").toString(), token))
 
+    fun system(base: String, token: String): SystemOverview =
+        contextaJson.decodeFromString(get(apiUrl(base, "system").toString(), token))
+
+    fun activity(
+        base: String,
+        token: String,
+        cursor: String? = null,
+        category: String = "",
+        level: String = "",
+    ): ActivityPage {
+        val url = apiUrl(base, "activity").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (category.isNotBlank()) addQueryParameter("category", category)
+                if (level.isNotBlank()) addQueryParameter("level", level)
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
     fun staleConversations(base: String, token: String, days: Int = 30, cursor: String? = null): StalePage {
         val url = apiUrl(base, "conversations/stale").newBuilder()
             .addQueryParameter("days", days.toString())

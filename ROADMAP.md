@@ -1,6 +1,6 @@
 # Roadmap Android
 
-O web é o painel admin. O app copia o uso no celular, em fatias. Uma fatia = um APK pra testar. Sem backend novo até a 16.
+O web é o painel admin. O app copia o uso no celular, em fatias. Uma fatia = um APK pra testar. Update continua pelos GitHub Releases.
 
 No celular o web já usa 4 abas: Conversas, Contatos, Tarefas, Busca. O resto fica em **Mais**.
 
@@ -23,9 +23,8 @@ Não clonar 1:1: passkeys, gráficos, cliente de e-mail, enviar WhatsApp (não t
 | 13 | Manutenção | Deny list e limpeza |
 | 14 | Integrações | Status WhatsApp/MCP/e-mail/Pushover + teste |
 | 15 | Sistema | Saúde e atividade. Acesso = “use o web” |
-| 16 | Update pelo Go | `GET /api/v1/android/update` no lugar do GitHub |
 | 17 | Só se doer | SSE incremental, mídia, enviar WhatsApp, FCM |
 
-Ordem: 1–6 = web mobile. 7–12 = organização. 13–16 = painel. 17 opcional.
+Ordem: 1–6 = web mobile. 7–12 = organização. 13–15 = painel. 17 opcional. Update pelo Go saiu.
 
 Antes da 2: voltar do sistema, cache em memória, skeleton, scroll infinito, separador de dia, fundo do chat, ícones.

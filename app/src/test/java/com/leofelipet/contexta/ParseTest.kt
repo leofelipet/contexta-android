@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -185,6 +186,39 @@ class ParseTest {
         assertTrue(showStickyDay("Hoje", nearLatest = false))
         assertTrue(showStickyDay("Ontem", nearLatest = true))
         assertFalse(showStickyDay("", nearLatest = false))
+    }
+
+    @Test
+    fun systemHealthAndActivityParse() {
+        val system = contextaJson.decodeFromString<SystemOverview>(
+            """{"generated_at":"2026-11-11T15:00:00Z","version":"1.2.3","started_at":"2026-11-11T12:00:00Z","database":{"size_bytes":1536,"messages_last_24h":9,"last_message_at":"2026-11-11T14:50:00Z","migration_version":4,"denylist_entries":2},"pool":{"max_connections":10,"acquired_connections":9},"queues":{"transcription_failed":1}}""",
+        )
+        assertEquals("1.5 KB", formatBytes(system.database.sizeBytes))
+        assertEquals("2h 0min", formatUptime(system.startedAt, Instant.parse("2026-11-11T14:00:00Z").toEpochMilli()))
+        assertEquals(90, systemPoolUsage(system.pool))
+        assertTrue(systemNeedsAttention(system, Instant.parse("2026-11-11T15:00:00Z").toEpochMilli()))
+        assertEquals("Ativa", systemIngestionLabel("2026-11-11T14:50:00Z", "2026-11-11T15:00:00Z"))
+        val page = contextaJson.decodeFromString<ActivityPage>(
+            """{"data":[{"id":"a1","category":"mcp","level":"error","operation":"list_tasks","outcome":"failed","occurred_at":"2026-11-11T15:00:00Z"}],"next_cursor":"n1"}""",
+        )
+        assertEquals("list_tasks", page.data.single().operation)
+        assertEquals("n1", page.nextCursor)
+    }
+
+    @Test
+    fun mergeNewestPageKeepsOlderAndPatchesFresh() {
+        val conversations = mergeNewestPage(
+            listOf(Conversation(id = "c2", title = "Bo"), Conversation(id = "c3", title = "Ca")),
+            listOf(Conversation(id = "c1", title = "Ana"), Conversation(id = "c2", title = "Bia")),
+        ) { it.id }
+        assertEquals(listOf("c1", "c2", "c3"), conversations.map { it.id })
+        assertEquals("Bia", conversations[1].title)
+        val messages = mergeNewestPage(
+            listOf(Message(id = "m1", text = "a"), Message(id = "m0", text = "old")),
+            listOf(Message(id = "m2", text = "n"), Message(id = "m1", text = "b")),
+        ) { it.id }
+        assertEquals(listOf("m2", "m1", "m0"), messages.map { it.id })
+        assertEquals("b", messages[1].text)
     }
 
     @Test

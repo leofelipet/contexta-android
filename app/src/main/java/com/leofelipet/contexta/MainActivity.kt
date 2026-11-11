@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -157,6 +158,7 @@ private sealed interface Screen {
     data object Maintenance : Screen
     data object Integrations : Screen
     data object Notifications : Screen
+    data object System : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -219,6 +221,12 @@ class MainActivity : ComponentActivity() {
                         onMaintenance = { stack = stack + Screen.Maintenance },
                         onIntegrations = { stack = stack + Screen.Integrations },
                         onNotifications = { stack = stack + Screen.Notifications },
+                        onSystem = { stack = stack + Screen.System },
+                    )
+                    Screen.System -> SystemScreen(
+                        api, prefs,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
                     )
                     Screen.Notifications -> NotificationSettingsScreen(
                         prefs,
@@ -2749,6 +2757,11 @@ private fun DashboardScreen(
 
 @Composable
 private fun StatCard(label: String, value: Int, hint: String, modifier: Modifier = Modifier) {
+    StatCard(label, value.toString(), hint, modifier)
+}
+
+@Composable
+private fun StatCard(label: String, value: String, hint: String, modifier: Modifier = Modifier) {
     Column(
         modifier
             .clip(RoundedCornerShape(16.dp))
@@ -2756,8 +2769,234 @@ private fun StatCard(label: String, value: Int, hint: String, modifier: Modifier
             .padding(16.dp),
     ) {
         Text(label, color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Text(value.toString(), color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+        Text(value, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
         if (hint.isNotBlank()) Text(hint, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+private val sistemaPills = listOf("health" to "Saúde", "activity" to "Atividade")
+private val activityCategoryPills = listOf("" to "Todas", "webhook" to "Webhook", "uazapi" to "UAZAPI", "mcp" to "MCP", "admin" to "Admin")
+private val activityLevelPills = listOf("" to "Níveis", "info" to "Info", "warning" to "Alerta", "error" to "Erro")
+
+@Composable
+private fun SystemScreen(
+    api: Api,
+    prefs: Prefs,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var section by remember { mutableStateOf("health") }
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Sistema", onBack) },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(if (section == "health") Paper else SurfaceWhite)) {
+            TypePills(section, sistemaPills) { section = it }
+            if (section == "activity") ActivityPane(api, prefs, onUnauthorized)
+            else HealthPane(api, prefs, onUnauthorized)
+        }
+    }
+}
+
+@Composable
+private fun HealthPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
+    var data by remember { mutableStateOf<SystemOverview?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        loading = true
+        error = null
+        try {
+            data = withContext(Dispatchers.IO) { api.system(prefs.baseUrl, prefs.token) }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar a saúde do sistema."
+        } finally {
+            loading = false
+        }
+    }
+    val overview = data
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        when {
+            loading && overview == null -> ConversationSkeleton(rows = 6)
+            error != null && overview == null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+            overview != null -> {
+                val attention = systemNeedsAttention(overview)
+                val ingestion = systemIngestionLabel(overview.database.lastMessageAt, overview.generatedAt)
+                val pool = systemPoolUsage(overview.pool)
+                Text(
+                    if (attention) "Alguns sinais pedem atenção" else "Operacional",
+                    color = if (attention) Color(0xFF92400E) else Brand,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+                Text(
+                    "v${overview.version.ifBlank { "—" }} · uptime ${formatUptime(overview.startedAt)}",
+                    color = Muted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp),
+                )
+                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Banco", formatBytes(overview.database.sizeBytes), "armazenamento", Modifier.weight(1f))
+                    StatCard("Mensagens 24h", overview.database.messagesLast24h, ingestion, Modifier.weight(1f))
+                }
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Pool", "$pool%", "${overview.pool.acquiredConnections}/${overview.pool.maxConnections}", Modifier.weight(1f))
+                    StatCard("Schema", overview.database.migrationVersion?.let { "v$it" } ?: "—", "migration", Modifier.weight(1f))
+                }
+                Column(Modifier.padding(16.dp).clip(RoundedCornerShape(16.dp)).background(SurfaceWhite).padding(16.dp)) {
+                    HealthRow("Ingestão", ingestion)
+                    HealthRow("Última mensagem", formatListTime(overview.database.lastMessageAt.orEmpty()).ifBlank { "—" })
+                    HealthRow("Último webhook", formatListTime(overview.database.lastWebhookAt.orEmpty()).ifBlank { "—" })
+                    HealthRow("Deny list", overview.database.denylistEntries.toString())
+                    HealthRow("Transcrição falhas", overview.queues.transcriptionFailed.toString())
+                }
+                Text(
+                    "Passkeys e senha ficam no painel web.",
+                    color = Muted,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HealthRow(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, color = Muted, fontSize = 13.sp)
+        Text(value.ifBlank { "—" }, color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ActivityPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
+    var items by remember { mutableStateOf(listOf<ActivityEvent>()) }
+    var cursor by remember { mutableStateOf<String?>(null) }
+    var category by remember { mutableStateOf("") }
+    var level by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = remember { LazyListState() }
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar a atividade."
+    }
+
+    fun loadMore() {
+        val next = cursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val cat = category
+        val lvl = level
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.activity(prefs.baseUrl, prefs.token, cursor = next, category = cat, level = lvl)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cursor = null
+                    return@launch
+                }
+                items = items + page.data.filter { row -> items.none { it.id == row.id } }
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(cat: String, lvl: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.activity(prefs.baseUrl, prefs.token, category = cat, level = lvl)
+                }
+                if (mine != ticket[0]) return@launch
+                items = page.data
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(category, level) { reload(category, level) }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        TypePills(category, activityCategoryPills) { category = it }
+        TypePills(level, activityLevelPills) { level = it }
+        when {
+            loading && items.isEmpty() -> ConversationSkeleton()
+            items.isEmpty() -> EmptyHint(Icons.Filled.Info, error ?: "Nenhuma atividade")
+            else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                items(items, key = { it.id }) { event ->
+                    val tone = when (event.level) {
+                        "error" -> MaterialTheme.colorScheme.error
+                        "warning" -> Color(0xFF92400E)
+                        else -> Muted
+                    }
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Text(
+                            event.operation.ifBlank { event.category }.ifBlank { "evento" },
+                            color = Ink,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            listOf(
+                                event.category,
+                                event.outcome,
+                                event.level,
+                                formatListTime(event.occurredAt),
+                            ).filter { it.isNotBlank() }.joinToString(" · "),
+                            color = tone,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    HorizontalDivider(color = Line)
+                }
+                if (loadingMore) item { ConversationSkeleton(rows = 2) }
+            }
+        }
     }
 }
 
@@ -3311,7 +3550,7 @@ private val moreItems = listOf(
     MoreItem("Memórias", Icons.Filled.Star, "memories"),
     MoreItem("Manutenção", Icons.Filled.Build, "maintenance"),
     MoreItem("Integrações", Icons.Filled.Share, "integrations"),
-    MoreItem("Sistema", Icons.Filled.Settings),
+    MoreItem("Sistema", Icons.Filled.Settings, "system"),
 )
 
 @Composable
@@ -3324,6 +3563,7 @@ private fun MoreScreen(
     onMaintenance: () -> Unit,
     onIntegrations: () -> Unit,
     onNotifications: () -> Unit,
+    onSystem: () -> Unit,
 ) {
     Scaffold(
         containerColor = Paper,
@@ -3345,6 +3585,7 @@ private fun MoreScreen(
                     "maintenance" -> onMaintenance
                     "integrations" -> onIntegrations
                     "notifications" -> onNotifications
+                    "system" -> onSystem
                     else -> null
                 }
                 Row(
@@ -3410,6 +3651,7 @@ private fun InboxScreen(
     var loadingMore by remember { mutableStateOf(false) }
     val paging = remember { booleanArrayOf(false) }
     val ticket = remember { intArrayOf(0) }
+    val head = remember { intArrayOf(0) }
     val hasRows = remember { booleanArrayOf(cache.conversations.isNotEmpty()) }
     val scope = rememberCoroutineScope()
     val listState = cache.conversationListState
@@ -3517,6 +3759,31 @@ private fun InboxScreen(
         }
     }
 
+    fun refreshHead() {
+        val mine = ++head[0]
+        val q = cache.conversationQuery
+        val kind = cache.conversationType
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.conversations(prefs.baseUrl, prefs.token, query = q, type = kind)
+                }
+                if (mine != head[0]) return@launch
+                if (q != cache.conversationQuery || kind != cache.conversationType) return@launch
+                val merged = mergeNewestPage(cache.conversations, page.data) { it.id }
+                cache.conversations = merged
+                if (merged.size <= page.data.size) cache.conversationCursor = page.nextCursor
+                cache.conversationsReady = true
+                items = merged
+                cursor = cache.conversationCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     LaunchedEffect(query, type) {
         val warm = cache.conversationsReady && cache.conversationQuery == query && cache.conversationType == type
         if (!warm && query.isNotEmpty() && type == cache.conversationType) delay(300)
@@ -3535,7 +3802,7 @@ private fun InboxScreen(
     }
 
     DisposableEffect(prefs.baseUrl, prefs.token) {
-        val source = api.events(prefs.baseUrl, prefs.token) { reload(cache.conversationQuery, cache.conversationType) }
+        val source = api.events(prefs.baseUrl, prefs.token) { refreshHead() }
         onDispose { source.cancel() }
     }
 
@@ -3767,6 +4034,7 @@ private fun ThreadScreen(
     var showContact by remember(conversationId) { mutableStateOf(false) }
     val paging = remember(conversationId) { booleanArrayOf(false) }
     val ticket = remember(conversationId) { intArrayOf(0) }
+    val head = remember(conversationId) { intArrayOf(0) }
     val hasRows = remember(conversationId) { booleanArrayOf(thread.items.isNotEmpty()) }
     val scope = rememberCoroutineScope()
     val listState = thread.listState
@@ -3928,6 +4196,28 @@ private fun ThreadScreen(
         }
     }
 
+    fun refreshHead() {
+        val mine = ++head[0]
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.messages(prefs.baseUrl, prefs.token, conversationId)
+                }
+                if (mine != head[0]) return@launch
+                val atBottom = listState.firstVisibleItemIndex == 0
+                val added = page.data.any { fresh -> thread.items.none { it.id == fresh.id } }
+                val merged = mergeNewestPage(thread.items, page.data) { it.id }
+                items = merged
+                thread.items = merged
+                hasRows[0] = merged.isNotEmpty()
+                if (atBottom && added) listState.scrollToItem(0)
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     LaunchedEffect(conversationId) {
         loadHeader()
         reload()
@@ -3941,7 +4231,7 @@ private fun ThreadScreen(
         }
     }
     DisposableEffect(conversationId, prefs.baseUrl, prefs.token) {
-        val source = api.events(prefs.baseUrl, prefs.token) { reload() }
+        val source = api.events(prefs.baseUrl, prefs.token) { refreshHead() }
         onDispose { source.cancel() }
     }
 

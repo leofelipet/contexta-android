@@ -303,6 +303,108 @@ fun whatsappOnline(status: String): Boolean =
     status.lowercase() in setOf("connected", "online", "open")
 
 @Serializable
+data class SystemOverview(
+    @SerialName("generated_at") val generatedAt: String = "",
+    val version: String = "",
+    @SerialName("started_at") val startedAt: String = "",
+    val database: SystemDatabase = SystemDatabase(),
+    val pool: SystemPool = SystemPool(),
+    val queues: SystemQueues = SystemQueues(),
+)
+
+@Serializable
+data class SystemDatabase(
+    @SerialName("size_bytes") val sizeBytes: Long = 0,
+    @SerialName("messages_last_24h") val messagesLast24h: Int = 0,
+    @SerialName("last_message_at") val lastMessageAt: String? = null,
+    @SerialName("last_webhook_at") val lastWebhookAt: String? = null,
+    @SerialName("migration_version") val migrationVersion: Int? = null,
+    @SerialName("denylist_entries") val denylistEntries: Int = 0,
+)
+
+@Serializable
+data class SystemPool(
+    @SerialName("max_connections") val maxConnections: Int = 0,
+    @SerialName("total_connections") val totalConnections: Int = 0,
+    @SerialName("idle_connections") val idleConnections: Int = 0,
+    @SerialName("acquired_connections") val acquiredConnections: Int = 0,
+)
+
+@Serializable
+data class SystemQueues(
+    @SerialName("transcription_pending") val transcriptionPending: Int = 0,
+    @SerialName("transcription_processing") val transcriptionProcessing: Int = 0,
+    @SerialName("transcription_retry") val transcriptionRetry: Int = 0,
+    @SerialName("transcription_failed") val transcriptionFailed: Int = 0,
+)
+
+@Serializable
+data class ActivityPage(
+    val data: List<ActivityEvent> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class ActivityEvent(
+    val id: String,
+    val category: String = "",
+    val level: String = "",
+    val operation: String = "",
+    val outcome: String = "",
+    @SerialName("occurred_at") val occurredAt: String = "",
+)
+
+fun formatBytes(bytes: Long): String {
+    if (bytes < 0) return "—"
+    if (bytes < 1024) return "$bytes B"
+    val units = arrayOf("KB", "MB", "GB", "TB")
+    var amount = bytes.toDouble() / 1024
+    var index = 0
+    while (amount >= 1024 && index < units.lastIndex) {
+        amount /= 1024
+        index++
+    }
+    return String.format(java.util.Locale.US, "%.1f %s", amount, units[index])
+}
+
+fun formatUptime(startedAt: String, nowMillis: Long = System.currentTimeMillis()): String {
+    val start = parseInstant(startedAt)?.toEpochMilli() ?: return "—"
+    val seconds = maxOf(0L, (nowMillis - start) / 1000)
+    val days = seconds / 86_400
+    val hours = (seconds % 86_400) / 3_600
+    val minutes = (seconds % 3_600) / 60
+    return when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}min"
+        else -> "${minutes}min"
+    }
+}
+
+fun systemPoolUsage(pool: SystemPool): Int {
+    if (pool.maxConnections <= 0) return 0
+    return (pool.acquiredConnections * 100) / pool.maxConnections
+}
+
+fun systemIngestionLabel(lastMessageAt: String?, generatedAt: String, nowMillis: Long = System.currentTimeMillis()): String {
+    val last = parseInstant(lastMessageAt.orEmpty())?.toEpochMilli() ?: return "Sem dados"
+    val at = parseInstant(generatedAt)?.toEpochMilli() ?: nowMillis
+    return if (at - last < 15 * 60_000) "Ativa" else "Ociosa"
+}
+
+fun systemNeedsAttention(data: SystemOverview, nowMillis: Long = System.currentTimeMillis()): Boolean {
+    if (systemPoolUsage(data.pool) > 80) return true
+    if (data.queues.transcriptionFailed > 0) return true
+    return systemIngestionLabel(data.database.lastMessageAt, data.generatedAt, nowMillis) == "Ociosa"
+}
+
+fun <T> mergeNewestPage(current: List<T>, fresh: List<T>, id: (T) -> String): List<T> {
+    if (fresh.isEmpty()) return current
+    if (current.isEmpty()) return fresh
+    val freshIds = fresh.map(id).toHashSet()
+    return fresh + current.filter { id(it) !in freshIds }
+}
+
+@Serializable
 data class UazapiIntegration(
     val instance: UazapiInstance = UazapiInstance(),
     val connection: UazapiConnection = UazapiConnection(),
