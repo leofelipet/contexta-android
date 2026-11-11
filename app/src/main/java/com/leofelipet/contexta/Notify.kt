@@ -34,7 +34,7 @@ object Notify {
     }
 
     fun connected(context: Context) = NotificationCompat.Builder(context, CHANNEL_LIVE)
-        .setSmallIcon(R.drawable.ic_launcher)
+        .setSmallIcon(R.drawable.ic_stat_notify)
         .setContentTitle("Contexta")
         .setContentText("Conectado. Avisos chegam aqui.")
         .setContentIntent(openApp(context))
@@ -48,7 +48,7 @@ object Notify {
             NotificationManagerCompat.from(context).notify(
                 id,
                 NotificationCompat.Builder(context, CHANNEL_ALERTS)
-                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setSmallIcon(R.drawable.ic_stat_notify)
                     .setContentTitle(title.ifBlank { "Contexta" })
                     .setContentText(text)
                     .setContentIntent(openApp(context))
