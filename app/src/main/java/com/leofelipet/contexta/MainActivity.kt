@@ -154,6 +154,7 @@ private sealed interface Screen {
     data object MemoryForm : Screen
     data object Dashboard : Screen
     data object Maintenance : Screen
+    data object Integrations : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -206,6 +207,12 @@ class MainActivity : ComponentActivity() {
                         onCompanies = { stack = stack + Screen.Companies },
                         onMemories = { stack = stack + Screen.Memories },
                         onMaintenance = { stack = stack + Screen.Maintenance },
+                        onIntegrations = { stack = stack + Screen.Integrations },
+                    )
+                    Screen.Integrations -> IntegrationsScreen(
+                        api, prefs,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
                     )
                     Screen.Dashboard -> DashboardScreen(
                         api, prefs,
@@ -3002,6 +3009,279 @@ private fun CleanupPane(api: Api, prefs: Prefs, cache: SessionCache, onUnauthori
     }
 }
 
+private val integrationPills = listOf(
+    "whatsapp" to "WhatsApp",
+    "mcp" to "MCP",
+    "email" to "E-mail",
+    "pushover" to "Pushover",
+)
+
+@Composable
+private fun IntegrationsScreen(
+    api: Api,
+    prefs: Prefs,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var section by remember { mutableStateOf("whatsapp") }
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Integrações", onBack) },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            TypePills(section, integrationPills) { section = it }
+            when (section) {
+                "mcp" -> McpPane(api, prefs, onUnauthorized)
+                "email" -> EmailPane(api, prefs, onUnauthorized)
+                "pushover" -> PushoverPane(api, prefs, onUnauthorized)
+                else -> WhatsappPane(api, prefs, onUnauthorized)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, color = Muted, fontSize = 14.sp)
+        Text(value.ifBlank { "—" }, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(start = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun WhatsappPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
+    var data by remember { mutableStateOf<UazapiIntegration?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        loading = true
+        try {
+            data = withContext(Dispatchers.IO) { api.uazapi(prefs.baseUrl, prefs.token) }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar o WhatsApp."
+        } finally {
+            loading = false
+        }
+    }
+    val wa = data
+    when {
+        loading && wa == null -> ConversationSkeleton(rows = 5)
+        error != null && wa == null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        wa != null -> Column(Modifier.verticalScroll(rememberScrollState())) {
+            val ok = wa.connection.connected && wa.connection.loggedIn
+            Text(
+                if (ok) "Conectada" else "Desconectada",
+                color = if (ok) Brand else Color(0xFFB91C1C),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(16.dp),
+            )
+            InfoRow("Perfil", wa.instance.profileName.ifBlank { wa.instance.name })
+            HorizontalDivider(color = Line)
+            InfoRow("Estado", wa.instance.status)
+            HorizontalDivider(color = Line)
+            InfoRow("Sessão", if (wa.connection.loggedIn) "Autenticada" else "Não autenticada")
+            HorizontalDivider(color = Line)
+            InfoRow("Webhook", if (wa.webhook.enabled) "Ativo" else if (wa.webhook.configured) "Configurado" else "Não configurado")
+            HorizontalDivider(color = Line)
+            InfoRow("Eventos", wa.webhook.events.size.toString())
+            HorizontalDivider(color = Line)
+            InfoRow("Verificado", formatListTime(wa.checkedAt).ifBlank { wa.checkedAt })
+        }
+    }
+}
+
+@Composable
+private fun McpPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
+    var data by remember { mutableStateOf<McpStatus?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        loading = true
+        try {
+            data = withContext(Dispatchers.IO) { api.mcpStatus(prefs.baseUrl, prefs.token) }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar o MCP."
+        } finally {
+            loading = false
+        }
+    }
+    val mcp = data
+    when {
+        loading && mcp == null -> ConversationSkeleton(rows = 6)
+        error != null && mcp == null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        mcp != null -> LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                Text(
+                    if (mcp.enabled) "Habilitado" else "Desabilitado",
+                    color = if (mcp.enabled) Brand else Muted,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(16.dp),
+                )
+                InfoRow("Endpoint", mcp.endpoint)
+                HorizontalDivider(color = Line)
+                InfoRow("Auth", mcp.authentication)
+                HorizontalDivider(color = Line)
+                InfoRow("Último acesso", mcp.lastAccessAt?.let { formatListTime(it).ifBlank { it } } ?: "—")
+                Text("Ferramentas", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
+            }
+            if (mcp.tools.isEmpty()) item { Text("Nenhuma ferramenta.", color = Muted, modifier = Modifier.padding(16.dp)) }
+            items(mcp.tools, key = { it }) { tool ->
+                Text(tool, color = Ink, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                HorizontalDivider(color = Line)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmailPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
+    var items by remember { mutableStateOf(listOf<EmailAccount>()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var testingId by remember { mutableStateOf<String?>(null) }
+    var testNote by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        loading = true
+        try {
+            items = withContext(Dispatchers.IO) { api.emailAccounts(prefs.baseUrl, prefs.token).data }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar as contas de e-mail."
+        } finally {
+            loading = false
+        }
+    }
+    fun test(id: String) {
+        testingId = id
+        testNote = null
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { api.testEmailAccount(prefs.baseUrl, prefs.token, id) }
+                testNote = when {
+                    result.imapOk && result.smtpOk -> "IMAP e SMTP ok."
+                    else -> listOfNotNull(
+                        if (!result.imapOk) "IMAP: ${result.imapError ?: "falhou"}" else null,
+                        if (!result.smtpOk) "SMTP: ${result.smtpError ?: "falhou"}" else null,
+                    ).joinToString(" · ")
+                }
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                testNote = "Não foi possível testar."
+            } finally {
+                testingId = null
+            }
+        }
+    }
+    when {
+        loading && items.isEmpty() -> ConversationSkeleton()
+        items.isEmpty() -> EmptyHint(Icons.Filled.MailOutline, error ?: "Nenhuma conta de e-mail")
+        else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+            if (testNote != null) item { Text(testNote!!, color = Brand, modifier = Modifier.padding(16.dp)) }
+            items(items, key = { it.id }) { account ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(account.name.ifBlank { account.address }, color = Ink, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            listOfNotNull(account.address.ifBlank { null }, if (account.enabled) "Ativa" else "Desativada").joinToString(" · "),
+                            color = Muted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    TextButton(onClick = { test(account.id) }, enabled = testingId == null) {
+                        Text(if (testingId == account.id) "Testando..." else "Testar", color = Brand, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                HorizontalDivider(color = Line)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PushoverPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
+    var status by remember { mutableStateOf<PushoverStatus?>(null) }
+    var title by remember { mutableStateOf("Contexta") }
+    var message by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var sending by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        loading = true
+        try {
+            status = withContext(Dispatchers.IO) { api.pushoverStatus(prefs.baseUrl, prefs.token) }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar o Pushover."
+        } finally {
+            loading = false
+        }
+    }
+    val ready = status?.configured == true && status?.enabled == true
+    fun send() {
+        val text = message.trim()
+        if (text.isBlank() || sending || !ready) return
+        sending = true
+        error = null
+        note = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.sendPushover(prefs.baseUrl, prefs.token, title.trim().ifBlank { "Contexta" }, text) }
+                note = "Notificação enviada."
+                message = ""
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                error = "Não foi possível enviar."
+            } finally {
+                sending = false
+            }
+        }
+    }
+    when {
+        loading && status == null -> ConversationSkeleton(rows = 4)
+        else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val label = when {
+                status?.configured == true && status?.enabled == true -> "Ativa"
+                status?.configured == true -> "Desativada"
+                else -> "Não configurada"
+            }
+            Text(label, color = if (ready) Brand else Color(0xFF92400E), fontWeight = FontWeight.SemiBold)
+            if (!ready) Text("Configure o Pushover no painel web para enviar daqui.", color = Muted, fontSize = 13.sp)
+            OutlinedTextField(title, { title = it }, label = { Text("Título") }, singleLine = true, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(message, { message = it }, label = { Text("Mensagem") }, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), minLines = 4, modifier = Modifier.fillMaxWidth())
+            if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+            if (note != null) Text(note!!, color = Brand)
+            Button(
+                onClick = { send() },
+                enabled = ready && !sending && message.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Brand, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(if (sending) "Enviando..." else "Enviar teste", fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
 private data class MoreItem(val label: String, val icon: ImageVector, val key: String? = null)
 
 private val moreItems = listOf(
@@ -3009,7 +3289,7 @@ private val moreItems = listOf(
     MoreItem("Empresas", Icons.Filled.AccountBox, "companies"),
     MoreItem("Memórias", Icons.Filled.Star, "memories"),
     MoreItem("Manutenção", Icons.Filled.Build, "maintenance"),
-    MoreItem("Integrações", Icons.Filled.Share),
+    MoreItem("Integrações", Icons.Filled.Share, "integrations"),
     MoreItem("Sistema", Icons.Filled.Settings),
 )
 
@@ -3021,6 +3301,7 @@ private fun MoreScreen(
     onCompanies: () -> Unit,
     onMemories: () -> Unit,
     onMaintenance: () -> Unit,
+    onIntegrations: () -> Unit,
 ) {
     Scaffold(
         containerColor = Paper,
@@ -3040,6 +3321,7 @@ private fun MoreScreen(
                     "companies" -> onCompanies
                     "memories" -> onMemories
                     "maintenance" -> onMaintenance
+                    "integrations" -> onIntegrations
                     else -> null
                 }
                 Row(

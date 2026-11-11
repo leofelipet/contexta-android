@@ -246,6 +246,43 @@ class Api(
         delete(apiUrl(base, "memories/$id").toString(), token)
     }
 
+    fun uazapi(base: String, token: String): UazapiIntegration =
+        contextaJson.decodeFromString(get(apiUrl(base, "integrations/uazapi").toString(), token))
+
+    fun mcpStatus(base: String, token: String): McpStatus =
+        contextaJson.decodeFromString(get(apiUrl(base, "mcp/status").toString(), token))
+
+    fun pushoverStatus(base: String, token: String): PushoverStatus =
+        contextaJson.decodeFromString(get(apiUrl(base, "integrations/pushover").toString(), token))
+
+    fun sendPushover(base: String, token: String, title: String, message: String) {
+        post(
+            apiUrl(base, "integrations/pushover/send").toString(),
+            token,
+            contextaJson.encodeToString(SendPushoverBody(message = message, title = title)),
+        )
+    }
+
+    fun emailAccounts(base: String, token: String): EmailAccountPage {
+        val url = apiUrl(base, "email-accounts").newBuilder()
+            .addQueryParameter("limit", "50")
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun testEmailAccount(base: String, token: String, id: String): EmailTestResult {
+        val request = authed(apiUrl(base, "email-accounts/$id/test").toString(), token)
+            .newBuilder()
+            .post("{}".toRequestBody(jsonMedia))
+            .build()
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (response.code == 401) throw Unauthorized()
+            if (!response.isSuccessful && response.code != 502) throw ApiException(response.code)
+            return contextaJson.decodeFromString(body)
+        }
+    }
+
     fun addDenylist(base: String, token: String, targetType: String, targetId: String, reason: String) {
         post(
             apiUrl(base, "denylist").toString(),

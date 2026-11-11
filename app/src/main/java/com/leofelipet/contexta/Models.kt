@@ -294,6 +294,78 @@ fun whatsappOnline(status: String): Boolean =
     status.lowercase() in setOf("connected", "online", "open")
 
 @Serializable
+data class UazapiIntegration(
+    val instance: UazapiInstance = UazapiInstance(),
+    val connection: UazapiConnection = UazapiConnection(),
+    val webhook: UazapiWebhook = UazapiWebhook(),
+    @SerialName("checked_at") val checkedAt: String = "",
+)
+
+@Serializable
+data class UazapiInstance(
+    val id: String = "",
+    val name: String = "",
+    val status: String = "",
+    @SerialName("profile_name") val profileName: String = "",
+)
+
+@Serializable
+data class UazapiConnection(
+    val connected: Boolean = false,
+    @SerialName("logged_in") val loggedIn: Boolean = false,
+)
+
+@Serializable
+data class UazapiWebhook(
+    val configured: Boolean = false,
+    val enabled: Boolean = false,
+    val events: List<String> = emptyList(),
+)
+
+@Serializable
+data class McpStatus(
+    val enabled: Boolean = false,
+    val endpoint: String = "",
+    val authentication: String = "",
+    val tools: List<String> = emptyList(),
+    @SerialName("last_access_at") val lastAccessAt: String? = null,
+)
+
+@Serializable
+data class PushoverStatus(
+    val configured: Boolean = false,
+    val enabled: Boolean = false,
+)
+
+@Serializable
+data class SendPushoverBody(
+    val message: String,
+    val title: String = "Contexta",
+)
+
+@Serializable
+data class EmailAccountPage(
+    val data: List<EmailAccount> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class EmailAccount(
+    val id: String,
+    val name: String = "",
+    val address: String = "",
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class EmailTestResult(
+    @SerialName("imap_ok") val imapOk: Boolean = false,
+    @SerialName("smtp_ok") val smtpOk: Boolean = false,
+    @SerialName("imap_error") val imapError: String? = null,
+    @SerialName("smtp_error") val smtpError: String? = null,
+)
+
+@Serializable
 data class StalePage(
     val data: List<StaleConversation> = emptyList(),
     @SerialName("next_cursor") val nextCursor: String? = null,

@@ -114,6 +114,24 @@ class ParseTest {
     }
 
     @Test
+    fun integrationsParse() {
+        val wa = contextaJson.decodeFromString<UazapiIntegration>(
+            """{"instance":{"name":"casa","status":"open","profile_name":"Leo"},"connection":{"connected":true,"logged_in":true},"webhook":{"configured":true,"enabled":true,"events":["messages"]}}""",
+        )
+        assertEquals("Leo", wa.instance.profileName)
+        assertTrue(wa.connection.loggedIn)
+        val mcp = contextaJson.decodeFromString<McpStatus>(
+            """{"enabled":true,"endpoint":"/mcp","authentication":"bearer","tools":["list_tasks"]}""",
+        )
+        assertEquals("list_tasks", mcp.tools.single())
+        val mail = contextaJson.decodeFromString<EmailTestResult>(
+            """{"imap_ok":true,"smtp_ok":false,"smtp_error":"auth"}""",
+        )
+        assertTrue(mail.imapOk)
+        assertFalse(mail.smtpOk)
+    }
+
+    @Test
     fun audioWithoutTranscriptShowsStatus() {
         val pending = contextaJson.decodeFromString<Message>(
             """{"id":"m2","type":"audio","transcription":{"status":"pending"}}""",
