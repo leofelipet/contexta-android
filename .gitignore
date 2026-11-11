@@ -12,3 +12,5 @@ keystore.properties
 captures/
 *.iml
 .DS_Store
+
+.kotlin/
