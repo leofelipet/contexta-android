@@ -259,7 +259,59 @@ data class DenylistEntry(
     val id: String,
     @SerialName("target_type") val targetType: String = "",
     @SerialName("target_id") val targetId: String = "",
+    @SerialName("target_label") val targetLabel: String = "",
+) {
+    val headline: String get() = targetLabel.ifBlank { targetId }
+    val kindLabel: String get() = if (targetType == "contact") "Contato" else "Conversa"
+}
+
+@Serializable
+data class Dashboard(
+    val contacts: Int = 0,
+    val conversations: Int = 0,
+    val messages: Int = 0,
+    @SerialName("messages_inbound") val messagesInbound: Int = 0,
+    @SerialName("messages_outbound") val messagesOutbound: Int = 0,
+    @SerialName("messages_last_7d") val messagesLast7d: Int = 0,
+    @SerialName("messages_last_30d") val messagesLast30d: Int = 0,
+    val groups: Int = 0,
+    val directs: Int = 0,
+    @SerialName("active_conversations_7d") val activeConversations7d: Int = 0,
+    @SerialName("uazapi_status") val uazapiStatus: String = "",
+    val version: String = "",
+    @SerialName("top_conversations") val topConversations: List<DashboardTopConversation> = emptyList(),
 )
+
+@Serializable
+data class DashboardTopConversation(
+    val id: String,
+    val title: String = "",
+    val type: String = "",
+    @SerialName("message_count") val messageCount: Int = 0,
+)
+
+fun whatsappOnline(status: String): Boolean =
+    status.lowercase() in setOf("connected", "online", "open")
+
+@Serializable
+data class StalePage(
+    val data: List<StaleConversation> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+    val days: Int = 30,
+)
+
+@Serializable
+data class StaleConversation(
+    val id: String,
+    val title: String = "",
+    val type: String = "",
+    @SerialName("last_message_at") val lastMessageAt: String? = null,
+    @SerialName("message_count") val messageCount: Int = 0,
+    @SerialName("inactive_days") val inactiveDays: Int = 0,
+    val blocked: Boolean = false,
+) {
+    val displayTitle: String get() = title.ifBlank { "Conversa" }
+}
 
 fun Conversation.isBlocked(conversationIds: Set<String>, contactIds: Set<String>): Boolean {
     if (id in conversationIds) return true

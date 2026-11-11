@@ -99,6 +99,21 @@ class ParseTest {
     }
 
     @Test
+    fun dashboardWhatsappAndStale() {
+        val dash = contextaJson.decodeFromString<Dashboard>(
+            """{"contacts":3,"messages":10,"messages_inbound":7,"uazapi_status":"open","top_conversations":[{"id":"c1","title":"Ana","message_count":4}]}""",
+        )
+        assertTrue(whatsappOnline(dash.uazapiStatus))
+        assertFalse(whatsappOnline("close"))
+        assertEquals("Ana", dash.topConversations.single().title)
+        val stale = contextaJson.decodeFromString<StalePage>(
+            """{"days":30,"data":[{"id":"c2","title":"Velha","message_count":9,"inactive_days":40,"blocked":true}]}""",
+        )
+        assertTrue(stale.data.single().blocked)
+        assertEquals("Velha", stale.data.single().displayTitle)
+    }
+
+    @Test
     fun audioWithoutTranscriptShowsStatus() {
         val pending = contextaJson.decodeFromString<Message>(
             """{"id":"m2","type":"audio","transcription":{"status":"pending"}}""",

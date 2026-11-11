@@ -152,6 +152,8 @@ private sealed interface Screen {
     data object Memories : Screen
     data class MemoryDetail(val id: String, val title: String) : Screen
     data object MemoryForm : Screen
+    data object Dashboard : Screen
+    data object Maintenance : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -200,8 +202,21 @@ class MainActivity : ComponentActivity() {
                     Screen.More -> MoreScreen(
                         onBack = ::back,
                         onLogout = ::leave,
+                        onDashboard = { stack = stack + Screen.Dashboard },
                         onCompanies = { stack = stack + Screen.Companies },
                         onMemories = { stack = stack + Screen.Memories },
+                        onMaintenance = { stack = stack + Screen.Maintenance },
+                    )
+                    Screen.Dashboard -> DashboardScreen(
+                        api, prefs,
+                        onBack = ::back,
+                        onOpenConversation = { id, title -> stack = stack + Screen.Thread(id, title) },
+                        onUnauthorized = ::leave,
+                    )
+                    Screen.Maintenance -> MaintenanceScreen(
+                        api, prefs, cache,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
                     )
                     Screen.Companies -> CompaniesScreen(
                         api, prefs, cache,
@@ -2610,13 +2625,390 @@ private fun MemoryFormScreen(
     }
 }
 
+private val maintenancePills = listOf("denylist" to "Deny list", "cleanup" to "Limpeza")
+private val staleDayPills = listOf("30" to "30 dias", "90" to "90 dias", "180" to "180 dias")
+
+@Composable
+private fun DashboardScreen(
+    api: Api,
+    prefs: Prefs,
+    onBack: () -> Unit,
+    onOpenConversation: (String, String) -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var data by remember { mutableStateOf<Dashboard?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        loading = true
+        error = null
+        try {
+            data = withContext(Dispatchers.IO) { api.dashboard(prefs.baseUrl, prefs.token) }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar a visão geral."
+        } finally {
+            loading = false
+        }
+    }
+
+    val dash = data
+    val online = dash?.let { whatsappOnline(it.uazapiStatus) } == true
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Visão geral", onBack) },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).background(Paper)) {
+            if (loading && dash == null) ConversationSkeleton(rows = 6)
+            else if (error != null && dash == null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+            else if (dash != null) {
+                Text(
+                    if (online) "WhatsApp conectado" else "WhatsApp: ${dash.uazapiStatus.ifBlank { "indisponível" }}",
+                    color = if (online) Brand else Color(0xFF92400E),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Mensagens", dash.messages, "${dash.messagesLast7d} nos últimos 7 dias", Modifier.weight(1f))
+                    StatCard("Recebidas", dash.messagesInbound, "entrantes", Modifier.weight(1f))
+                }
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Enviadas", dash.messagesOutbound, "saídas", Modifier.weight(1f))
+                    StatCard("Ativas (7d)", dash.activeConversations7d, "${dash.conversations} no total", Modifier.weight(1f))
+                }
+                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Contatos", dash.contacts, "", Modifier.weight(1f))
+                    StatCard("Grupos", dash.groups, "${dash.directs} diretas", Modifier.weight(1f))
+                }
+                Text("Conversas mais ativas", color = Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
+                if (dash.topConversations.isEmpty()) {
+                    Text("Sem dados ainda.", color = Muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                } else {
+                    dash.topConversations.forEach { item ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onOpenConversation(item.id, item.title.ifBlank { "Conversa" }) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.title.ifBlank { "Conversa" }, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (item.type == "group") "Grupo" else "Direta", color = Muted, fontSize = 12.sp)
+                            }
+                            Text(item.messageCount.toString(), color = Brand, fontWeight = FontWeight.SemiBold)
+                        }
+                        HorizontalDivider(color = Line)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatCard(label: String, value: Int, hint: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(SurfaceWhite)
+            .padding(16.dp),
+    ) {
+        Text(label, color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(value.toString(), color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+        if (hint.isNotBlank()) Text(hint, color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun MaintenanceScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var section by remember { mutableStateOf("denylist") }
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Manutenção", onBack) },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            TypePills(section, maintenancePills) { section = it }
+            if (section == "cleanup") CleanupPane(api, prefs, cache, onUnauthorized)
+            else DenylistPane(api, prefs, cache, onUnauthorized)
+        }
+    }
+}
+
+@Composable
+private fun DenylistPane(api: Api, prefs: Prefs, cache: SessionCache, onUnauthorized: () -> Unit) {
+    var items by remember { mutableStateOf(listOf<DenylistEntry>()) }
+    var cursor by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var confirmId by remember { mutableStateOf<String?>(null) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar a deny list."
+    }
+
+    fun applySets(entries: List<DenylistEntry>) {
+        val sets = denylistSets(entries)
+        cache.blockedConversationIds = sets.first
+        cache.blockedContactIds = sets.second
+    }
+
+    fun loadMore() {
+        val next = cursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) { api.denylist(prefs.baseUrl, prefs.token, cursor = next, limit = 20) }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cursor = null
+                    return@launch
+                }
+                items = items + page.data.filter { row -> items.none { it.id == row.id } }
+                cursor = page.nextCursor
+                applySets(items)
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload() {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) { api.denylist(prefs.baseUrl, prefs.token, limit = 20) }
+                if (mine != ticket[0]) return@launch
+                items = page.data
+                cursor = page.nextCursor
+                applySets(page.data)
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                }
+            }
+        }
+    }
+
+    fun remove(id: String) {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.removeDenylist(prefs.baseUrl, prefs.token, id) }
+                items = items.filter { it.id != id }
+                applySets(items)
+                confirmId = null
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                confirmId = null
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { reload() }
+
+    when {
+        loading && items.isEmpty() -> ConversationSkeleton()
+        items.isEmpty() -> EmptyHint(Icons.Filled.Warning, error ?: "Nada bloqueado")
+        else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+            items(items, key = { it.id }) { entry ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(entry.headline, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(entry.kindLabel, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    IconButton(onClick = { confirmId = entry.id }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Remover", tint = Muted)
+                    }
+                }
+                HorizontalDivider(color = Line)
+            }
+            if (cursor != null) {
+                item {
+                    TextButton(
+                        onClick = { loadMore() },
+                        enabled = !loadingMore,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (loadingMore) "Carregando..." else "Mais", color = Brand, fontWeight = FontWeight.SemiBold) }
+                }
+            }
+        }
+    }
+    confirmId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { confirmId = null },
+            title = { Text("Remover da deny list?", color = Ink) },
+            text = { Text("Novas mensagens voltam a ser salvas.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove(id) }) { Text("Remover", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmId = null }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+@Composable
+private fun CleanupPane(api: Api, prefs: Prefs, cache: SessionCache, onUnauthorized: () -> Unit) {
+    var days by remember { mutableStateOf("30") }
+    var items by remember { mutableStateOf(listOf<StaleConversation>()) }
+    var cursor by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var confirmId by remember { mutableStateOf<String?>(null) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar a limpeza."
+    }
+
+    fun reload(selected: String) {
+        val mine = ++ticket[0]
+        scope.launch {
+            loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.staleConversations(prefs.baseUrl, prefs.token, days = selected.toIntOrNull() ?: 30)
+                }
+                if (mine != ticket[0]) return@launch
+                items = page.data
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) loading = false
+            }
+        }
+    }
+
+    fun loadMore() {
+        val next = cursor ?: return
+        val mine = ticket[0]
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.staleConversations(prefs.baseUrl, prefs.token, days = days.toIntOrNull() ?: 30, cursor = next)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cursor = null
+                    return@launch
+                }
+                items = items + page.data.filter { row -> items.none { it.id == row.id } }
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                fail(e)
+            }
+        }
+    }
+
+    fun remove(id: String) {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteConversation(prefs.baseUrl, prefs.token, id) }
+                items = items.filter { it.id != id }
+                cache.invalidateConversations()
+                confirmId = null
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                confirmId = null
+            }
+        }
+    }
+
+    LaunchedEffect(days) { reload(days) }
+
+    TypePills(days, staleDayPills) { days = it }
+    when {
+        loading && items.isEmpty() -> ConversationSkeleton()
+        items.isEmpty() -> EmptyHint(Icons.Filled.Delete, error ?: "Nada para limpar")
+        else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+            items(items, key = { it.id }) { conversation ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(conversation.displayTitle, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            listOfNotNull(
+                                if (conversation.blocked) "Bloqueada" else null,
+                                "${conversation.inactiveDays} dias",
+                                "${conversation.messageCount} msgs",
+                            ).joinToString(" · "),
+                            color = Muted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    IconButton(onClick = { confirmId = conversation.id }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Color(0xFFB91C1C))
+                    }
+                }
+                HorizontalDivider(color = Line)
+            }
+            if (cursor != null) {
+                item {
+                    TextButton(onClick = { loadMore() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Mais", color = Brand, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+    confirmId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { confirmId = null },
+            title = { Text("Apagar conversa?", color = Ink) },
+            text = { Text("Apaga a conversa e todas as mensagens. Não pode ser desfeita.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove(id) }) { Text("Apagar", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmId = null }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
 private data class MoreItem(val label: String, val icon: ImageVector, val key: String? = null)
 
 private val moreItems = listOf(
-    MoreItem("Visão geral", Icons.Filled.Home),
+    MoreItem("Visão geral", Icons.Filled.Home, "dashboard"),
     MoreItem("Empresas", Icons.Filled.AccountBox, "companies"),
     MoreItem("Memórias", Icons.Filled.Star, "memories"),
-    MoreItem("Manutenção", Icons.Filled.Build),
+    MoreItem("Manutenção", Icons.Filled.Build, "maintenance"),
     MoreItem("Integrações", Icons.Filled.Share),
     MoreItem("Sistema", Icons.Filled.Settings),
 )
@@ -2625,8 +3017,10 @@ private val moreItems = listOf(
 private fun MoreScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit,
+    onDashboard: () -> Unit,
     onCompanies: () -> Unit,
     onMemories: () -> Unit,
+    onMaintenance: () -> Unit,
 ) {
     Scaffold(
         containerColor = Paper,
@@ -2642,8 +3036,10 @@ private fun MoreScreen(
             )
             moreItems.forEach { item ->
                 val open = when (item.key) {
+                    "dashboard" -> onDashboard
                     "companies" -> onCompanies
                     "memories" -> onMemories
+                    "maintenance" -> onMaintenance
                     else -> null
                 }
                 Row(

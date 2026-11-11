@@ -81,12 +81,32 @@ class Api(
         return contextaJson.decodeFromString(get(url.toString(), token))
     }
 
-    fun denylist(base: String, token: String): DenylistPage {
-        // shortcut: first 200, paginate if a denylist grows past that
+    fun denylist(base: String, token: String, cursor: String? = null, limit: Int = 200): DenylistPage {
         val url = apiUrl(base, "denylist").newBuilder()
-            .addQueryParameter("limit", "200")
+            .addQueryParameter("limit", limit.toString())
+            .apply { if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor) }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun removeDenylist(base: String, token: String, id: String) {
+        delete(apiUrl(base, "denylist/$id").toString(), token)
+    }
+
+    fun dashboard(base: String, token: String): Dashboard =
+        contextaJson.decodeFromString(get(apiUrl(base, "dashboard").toString(), token))
+
+    fun staleConversations(base: String, token: String, days: Int = 30, cursor: String? = null): StalePage {
+        val url = apiUrl(base, "conversations/stale").newBuilder()
+            .addQueryParameter("days", days.toString())
+            .addQueryParameter("limit", "20")
+            .apply { if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor) }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun deleteConversation(base: String, token: String, id: String) {
+        delete(apiUrl(base, "conversations/$id").toString(), token)
     }
 
     fun messages(base: String, token: String, conversationId: String, cursor: String? = null): MessagePage {

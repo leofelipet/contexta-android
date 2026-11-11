@@ -118,6 +118,12 @@ class SessionCache {
         memoryCursor = null
         memoriesReady = false
     }
+
+    fun invalidateConversations() {
+        conversations = emptyList()
+        conversationCursor = null
+        conversationsReady = false
+    }
 }
 
 class ThreadCache(
