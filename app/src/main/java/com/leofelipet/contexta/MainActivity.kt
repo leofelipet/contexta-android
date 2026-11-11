@@ -17,6 +17,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -131,6 +132,7 @@ private sealed interface Screen {
     data object Help : Screen
     data object Inbox : Screen
     data object More : Screen
+    data class ContactDetail(val id: String, val title: String) : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -168,12 +170,19 @@ class MainActivity : ComponentActivity() {
                     Screen.Inbox -> HomeScreen(
                         api, prefs, cache, tab,
                         onTab = { tab = it },
-                        onOpen = { stack = stack + Screen.Thread(it.id, it.displayTitle) },
+                        onOpen = { id, title -> stack = stack + Screen.Thread(id, title) },
+                        onOpenContact = { stack = stack + Screen.ContactDetail(it.id, it.displayName) },
                         onUnauthorized = ::leave,
                         onMore = { stack = stack + Screen.More },
                         installApk = ::installApk,
                     )
                     Screen.More -> MoreScreen(onBack = ::back, onLogout = ::leave)
+                    is Screen.ContactDetail -> ContactDetailScreen(
+                        api, prefs, cache, current.id, current.title,
+                        onBack = ::back,
+                        onOpen = { id, title -> stack = stack + Screen.Thread(id, title) },
+                        onUnauthorized = ::leave,
+                    )
                     is Screen.Thread -> ThreadScreen(
                         api, prefs, cache, current.id, current.title,
                         onBack = ::back,
@@ -382,7 +391,8 @@ private fun HomeScreen(
     cache: SessionCache,
     tab: HomeTab,
     onTab: (HomeTab) -> Unit,
-    onOpen: (Conversation) -> Unit,
+    onOpen: (String, String) -> Unit,
+    onOpenContact: (Contact) -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
     installApk: (File) -> Unit,
@@ -392,7 +402,9 @@ private fun HomeScreen(
         Box(Modifier.weight(1f)) {
             when (tab) {
                 HomeTab.Conversas -> InboxScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
-                else -> ComingSoonScreen(tab, onMore)
+                HomeTab.Contatos -> ContactsScreen(api, prefs, cache, onOpenContact, onUnauthorized, onMore)
+                HomeTab.Busca -> SearchScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
+                HomeTab.Tarefas -> ComingSoonScreen(tab, onMore)
             }
         }
         HomeBottomBar(tab, onTab)
@@ -459,6 +471,476 @@ private fun ComingSoonScreen(tab: HomeTab, onMore: () -> Unit) {
             )
         }
     }
+}
+
+private val directionPills = listOf("" to "Todas", "inbound" to "Recebidas", "outbound" to "Enviadas")
+private val messageTypePills = listOf(
+    "" to "Todos",
+    "text" to "Texto",
+    "audio" to "Áudio",
+    "image" to "Imagem",
+    "document" to "Documento",
+)
+
+@Composable
+private fun ContactsScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onOpenContact: (Contact) -> Unit,
+    onUnauthorized: () -> Unit,
+    onMore: () -> Unit,
+) {
+    var items by remember { mutableStateOf(cache.contacts) }
+    var cursor by remember { mutableStateOf(cache.contactCursor) }
+    var query by remember { mutableStateOf(cache.contactQuery) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.contactsReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val hasRows = remember { booleanArrayOf(cache.contacts.isNotEmpty()) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.contactListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar os contatos."
+    }
+
+    fun loadMore() {
+        val next = cache.contactCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val q = cache.contactQuery
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.contacts(prefs.baseUrl, prefs.token, cursor = next, query = q)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.contactCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.contacts + page.data.filter { row -> cache.contacts.none { it.id == row.id } }
+                cache.contacts = merged
+                cache.contactCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(q: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            if (!hasRows[0]) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) { api.contacts(prefs.baseUrl, prefs.token, query = q) }
+                if (mine != ticket[0]) return@launch
+                val same = q == cache.contactQuery
+                val hadMore = same && cache.contacts.size > page.data.size
+                val freshIds = page.data.map { it.id }.toSet()
+                val merged = if (hadMore) page.data + cache.contacts.filter { it.id !in freshIds } else page.data
+                if (!same) listState.scrollToItem(0)
+                cache.contactQuery = q
+                cache.contacts = merged
+                if (!hadMore) cache.contactCursor = page.nextCursor
+                cache.contactsReady = true
+                items = merged
+                cursor = cache.contactCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                    val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    if (shouldPrefetch(last, cache.contacts.size) && cache.contactCursor != null) loadMore()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(query) {
+        val warm = cache.contactsReady && cache.contactQuery == query
+        if (!warm && query.isNotEmpty()) delay(300)
+        reload(query)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            ContextaBar("Contatos") {
+                IconButton(onClick = onMore) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Mais", tint = Ink)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            SearchField(query, { query = it }, "Nome ou telefone")
+            when {
+                loading && items.isEmpty() -> ConversationSkeleton()
+                items.isEmpty() -> EmptyHint(
+                    Icons.Filled.Person,
+                    error ?: if (query.isBlank()) "Nenhum contato ainda" else "Nenhum contato encontrado",
+                )
+                else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    items(items, key = { it.id }) { contact ->
+                        ContactRow(contact) { onOpenContact(contact) }
+                        HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
+                    }
+                    if (loadingMore) item { ConversationSkeleton(rows = 2) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContactRow(contact: Contact, onOpen: () -> Unit) {
+    val subtitle = listOf(contact.phone.ifBlank { "Telefone não informado" }, contact.companyName.ifBlank { "" })
+        .filter { it.isNotBlank() }
+        .joinToString(" · ")
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        InitialAvatar(contact.displayName)
+        Column(Modifier.weight(1f)) {
+            Text(contact.displayName, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+@Composable
+private fun ContactDetailScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    contactId: String,
+    title: String,
+    onBack: () -> Unit,
+    onOpen: (String, String) -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var contact by remember(contactId) { mutableStateOf(cache.contacts.firstOrNull { it.id == contactId }) }
+    var chats by remember(contactId) { mutableStateOf(listOf<Conversation>()) }
+    var error by remember(contactId) { mutableStateOf<String?>(null) }
+    var loading by remember(contactId) { mutableStateOf(true) }
+    val context = LocalContext.current
+    val heading = contact?.displayName ?: title
+
+    LaunchedEffect(contactId) {
+        loading = true
+        error = null
+        try {
+            val person = withContext(Dispatchers.IO) { api.contact(prefs.baseUrl, prefs.token, contactId) }
+            contact = person
+            chats = withContext(Dispatchers.IO) {
+                api.conversations(prefs.baseUrl, prefs.token, contactId = contactId).data
+            }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar o contato."
+        } finally {
+            loading = false
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar(heading, onBack) },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            if (loading && contact == null) {
+                ConversationSkeleton(rows = 4)
+            } else {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    InitialAvatar(heading)
+                    Text(heading, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                    val phone = contact?.phone.orEmpty()
+                    if (phone.isNotBlank()) {
+                        TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) }) {
+                            Icon(Icons.Filled.Phone, contentDescription = null, tint = Brand, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text(phone, color = Brand, fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        Text("Telefone não informado", color = Muted, fontSize = 14.sp)
+                    }
+                    if (!contact?.companyName.isNullOrBlank()) {
+                        Text(contact!!.companyName, color = Muted, fontSize = 14.sp)
+                    }
+                }
+                HorizontalDivider(color = Line)
+                Text(
+                    "Conversas",
+                    color = Muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+                )
+                when {
+                    error != null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                    chats.isEmpty() -> Text("Nenhuma conversa com este contato.", color = Muted, modifier = Modifier.padding(16.dp))
+                    else -> chats.forEach { conversation ->
+                        ConversationRow(conversation, blocked = conversation.isBlocked(cache.blockedConversationIds, cache.blockedContactIds)) {
+                            onOpen(conversation.id, conversation.displayTitle)
+                        }
+                        HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onOpen: (String, String) -> Unit,
+    onUnauthorized: () -> Unit,
+    onMore: () -> Unit,
+) {
+    var items by remember { mutableStateOf(cache.searchResults) }
+    var cursor by remember { mutableStateOf(cache.searchCursor) }
+    var query by remember { mutableStateOf(cache.searchQuery) }
+    var direction by remember { mutableStateOf(cache.searchDirection) }
+    var type by remember { mutableStateOf(cache.searchType) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.searchReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val hasRows = remember { booleanArrayOf(cache.searchResults.isNotEmpty()) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.searchListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível buscar mensagens."
+    }
+
+    fun loadMore() {
+        val next = cache.searchCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val q = cache.searchQuery
+        val dir = cache.searchDirection
+        val kind = cache.searchType
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.searchMessages(prefs.baseUrl, prefs.token, cursor = next, query = q, direction = dir, type = kind)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.searchCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.searchResults + page.data.filter { row -> cache.searchResults.none { it.id == row.id } }
+                cache.searchResults = merged
+                cache.searchCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(q: String, dir: String, kind: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        val same = q == cache.searchQuery && dir == cache.searchDirection && kind == cache.searchType
+        if (dir != cache.searchDirection || kind != cache.searchType) {
+            items = emptyList()
+            cursor = null
+            hasRows[0] = false
+            loading = true
+        }
+        scope.launch {
+            if (!hasRows[0]) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.searchMessages(prefs.baseUrl, prefs.token, query = q, direction = dir, type = kind)
+                }
+                if (mine != ticket[0]) return@launch
+                val hadMore = same && cache.searchResults.size > page.data.size
+                val freshIds = page.data.map { it.id }.toSet()
+                val merged = if (hadMore) page.data + cache.searchResults.filter { it.id !in freshIds } else page.data
+                if (!same) listState.scrollToItem(0)
+                cache.searchQuery = q
+                cache.searchDirection = dir
+                cache.searchType = kind
+                cache.searchResults = merged
+                if (!hadMore) cache.searchCursor = page.nextCursor
+                cache.searchReady = true
+                items = merged
+                cursor = cache.searchCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                    val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    if (shouldPrefetch(last, cache.searchResults.size) && cache.searchCursor != null) loadMore()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(query, direction, type) {
+        val warm = cache.searchReady && cache.searchQuery == query && cache.searchDirection == direction && cache.searchType == type
+        if (!warm && query.isNotEmpty() && direction == cache.searchDirection && type == cache.searchType) delay(300)
+        reload(query, direction, type)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            ContextaBar("Busca") {
+                IconButton(onClick = onMore) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Mais", tint = Ink)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            SearchField(query, { query = it }, "Texto da mensagem")
+            TypePills(direction, directionPills) { direction = it }
+            TypePills(type, messageTypePills) { type = it }
+            when {
+                loading && items.isEmpty() -> ConversationSkeleton()
+                items.isEmpty() -> EmptyHint(
+                    Icons.Filled.Search,
+                    error ?: "Nenhuma mensagem encontrada",
+                )
+                else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    items(items, key = { it.id }) { message ->
+                        SearchRow(message) {
+                            if (message.conversationId.isNotBlank()) {
+                                onOpen(message.conversationId, message.sender?.ifBlank { "Conversa" } ?: "Conversa")
+                            }
+                        }
+                        HorizontalDivider(color = Line)
+                    }
+                    if (loadingMore) item { ConversationSkeleton(rows = 2) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchRow(message: Message, onOpen: () -> Unit) {
+    val preview = message.displayText()
+    Row(
+        Modifier.fillMaxWidth().clickable(enabled = message.conversationId.isNotBlank(), onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier.size(36.dp).clip(CircleShape).background(if (message.inbound) Paper else BrandSoft),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (message.inbound) Icons.Filled.MailOutline else Icons.Filled.Send,
+                contentDescription = null,
+                tint = if (message.inbound) Muted else Brand,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(preview, color = Ink, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(
+                    if (message.isAudio) "Áudio" else null,
+                    message.sender?.trim()?.ifBlank { null },
+                    if (message.inbound) "Recebida" else "Enviada",
+                    formatListTime(message.timestamp).ifBlank { null },
+                ).joinToString(" · "),
+                color = Muted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchField(value: String, onValueChange: (String) -> Unit, placeholder: String) {
+    OutlinedTextField(
+        value,
+        onValueChange,
+        placeholder = { Text(placeholder) },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Muted) },
+        trailingIcon = if (value.isBlank()) {
+            null
+        } else {
+            {
+                IconButton(onClick = { onValueChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Limpar", tint = Muted)
+                }
+            }
+        },
+        singleLine = true,
+        colors = contextaFieldColors(),
+        shape = RoundedCornerShape(12.dp),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 private data class MoreItem(val label: String, val icon: ImageVector)
@@ -532,7 +1014,7 @@ private fun InboxScreen(
     api: Api,
     prefs: Prefs,
     cache: SessionCache,
-    onOpen: (Conversation) -> Unit,
+    onOpen: (String, String) -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
 ) {
@@ -724,7 +1206,7 @@ private fun InboxScreen(
                         ConversationRow(
                             conversation,
                             blocked = conversation.isBlocked(blockedConversations, blockedContacts),
-                        ) { onOpen(conversation) }
+                        ) { onOpen(conversation.id, conversation.displayTitle) }
                         HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
                     }
                     if (loadingMore) item { ConversationSkeleton(rows = 2) }
@@ -737,12 +1219,19 @@ private fun InboxScreen(
 private val typePills = listOf("" to "Todas", "direct" to "Diretas", "group" to "Grupos")
 
 @Composable
-private fun TypePills(selected: String, onSelect: (String) -> Unit) {
+private fun TypePills(
+    selected: String,
+    options: List<Pair<String, String>> = typePills,
+    onSelect: (String) -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        typePills.forEach { (value, label) ->
+        options.forEach { (value, label) ->
             val on = selected == value
             Text(
                 label,

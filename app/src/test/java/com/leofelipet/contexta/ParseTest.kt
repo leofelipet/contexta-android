@@ -44,6 +44,22 @@ class ParseTest {
     }
 
     @Test
+    fun contactNameFallsBackAndSearchKeepsConversation() {
+        val page = contextaJson.decodeFromString<ContactPage>(
+            """{"data":[{"id":"p1","name":"5511999","phone":"5511999","push_name":"Ana","company_name":"ACME"}]}""",
+        )
+        assertEquals("Ana", page.data.single().displayName)
+        assertEquals("ACME", page.data.single().companyName)
+        val unnamed = contextaJson.decodeFromString<Contact>("""{"id":"p2","phone":"119"}""")
+        assertEquals("Contato sem nome", unnamed.displayName)
+        val hit = contextaJson.decodeFromString<Message>(
+            """{"id":"m9","direction":"outbound","text":"ok","conversation_id":"c1"}""",
+        )
+        assertEquals("c1", hit.conversationId)
+        assertFalse(hit.inbound)
+    }
+
+    @Test
     fun audioWithoutTranscriptShowsStatus() {
         val pending = contextaJson.decodeFromString<Message>(
             """{"id":"m2","type":"audio","transcription":{"status":"pending"}}""",

@@ -12,6 +12,18 @@ class SessionCache {
     var blockedConversationIds: Set<String> = emptySet()
     var blockedContactIds: Set<String> = emptySet()
     var companies: List<Company> = emptyList()
+    var contactQuery: String = ""
+    var contacts: List<Contact> = emptyList()
+    var contactCursor: String? = null
+    var contactsReady: Boolean = false
+    val contactListState = LazyListState()
+    var searchQuery: String = ""
+    var searchDirection: String = ""
+    var searchType: String = ""
+    var searchResults: List<Message> = emptyList()
+    var searchCursor: String? = null
+    var searchReady: Boolean = false
+    val searchListState = LazyListState()
     val conversationListState = LazyListState()
     val threads = mutableMapOf<String, ThreadCache>()
 
@@ -24,6 +36,16 @@ class SessionCache {
         blockedConversationIds = emptySet()
         blockedContactIds = emptySet()
         companies = emptyList()
+        contactQuery = ""
+        contacts = emptyList()
+        contactCursor = null
+        contactsReady = false
+        searchQuery = ""
+        searchDirection = ""
+        searchType = ""
+        searchResults = emptyList()
+        searchCursor = null
+        searchReady = false
         threads.clear()
     }
 }

@@ -52,19 +52,35 @@ data class Company(
 )
 
 @Serializable
+data class ContactPage(
+    val data: List<Contact> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
 data class Contact(
     val id: String,
     val name: String = "",
     val phone: String = "",
     @SerialName("push_name") val pushName: String = "",
+    @SerialName("company_id") val companyId: String = "",
     @SerialName("company_name") val companyName: String = "",
 ) {
     val displayName: String
         get() {
-            val named = name.trim().ifBlank { pushName.trim() }
-            if (named.isNotBlank() && named != phone) return named
-            return if (phone.isNotBlank()) "Contato sem nome" else "Contato"
+            val number = phone.trim()
+            for (value in listOf(name, pushName)) {
+                val label = value.trim()
+                if (label.isNotBlank() && !placeholderContactName(label, number)) return label
+            }
+            return if (number.isNotBlank()) "Contato sem nome" else "Contato"
         }
+}
+
+fun placeholderContactName(name: String, phone: String): Boolean {
+    if (phone.isNotBlank() && name == phone) return true
+    if ('@' in name) return true
+    return name.matches(Regex("""^\+?\d{8,}$"""))
 }
 
 @Serializable
@@ -123,9 +139,11 @@ data class Message(
     val text: String? = null,
     val status: String? = null,
     val timestamp: String = "",
+    @SerialName("conversation_id") val conversationId: String = "",
     val transcription: Transcription? = null,
 ) {
     val isAudio: Boolean get() = type.equals("audio", ignoreCase = true)
+    val inbound: Boolean get() = direction != "outbound"
 }
 
 @Serializable

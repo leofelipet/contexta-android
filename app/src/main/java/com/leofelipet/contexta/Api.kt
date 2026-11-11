@@ -27,12 +27,45 @@ class Api(
         cursor: String? = null,
         query: String = "",
         type: String = "",
+        contactId: String = "",
     ): ConversationPage {
         val url = apiUrl(base, "conversations").newBuilder()
             .addQueryParameter("limit", "20")
             .apply {
                 if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
                 if (query.isNotBlank()) addQueryParameter("query", query)
+                if (type.isNotBlank()) addQueryParameter("type", type)
+                if (contactId.isNotBlank()) addQueryParameter("contact_id", contactId)
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun contacts(base: String, token: String, cursor: String? = null, query: String = ""): ContactPage {
+        val url = apiUrl(base, "contacts").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("query", query)
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun searchMessages(
+        base: String,
+        token: String,
+        cursor: String? = null,
+        query: String = "",
+        direction: String = "",
+        type: String = "",
+    ): MessagePage {
+        val url = apiUrl(base, "messages").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("query", query)
+                if (direction.isNotBlank()) addQueryParameter("direction", direction)
                 if (type.isNotBlank()) addQueryParameter("type", type)
             }
             .build()
