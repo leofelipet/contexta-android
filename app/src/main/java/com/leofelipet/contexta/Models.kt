@@ -140,6 +140,65 @@ fun Task.isOverdue(today: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.sys
 }
 
 @Serializable
+data class SchedulePage(
+    val data: List<Schedule> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class Schedule(
+    val id: String,
+    val title: String = "",
+    val cron: String = "",
+    val timezone: String = "",
+    val enabled: Boolean = true,
+    @SerialName("company_name") val companyName: String = "",
+    @SerialName("next_run_at") val nextRunAt: String? = null,
+)
+
+@Serializable
+data class UpdateScheduleBody(val enabled: Boolean)
+
+@Serializable
+data class ReminderPage(
+    val data: List<Reminder> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class Reminder(
+    val id: String,
+    val title: String = "",
+    val message: String = "",
+    val status: String = "pending",
+    @SerialName("send_at") val sendAt: String = "",
+) {
+    val pending: Boolean get() = status == "pending"
+}
+
+@Serializable
+data class CreateReminderBody(
+    val title: String = "",
+    val message: String,
+    @SerialName("send_at") val sendAt: String,
+    val timezone: String = "America/Sao_Paulo",
+)
+
+fun reminderStatusLabel(status: String) = when (status) {
+    "pending" -> "Agendado"
+    "sent" -> "Enviado"
+    "failed" -> "Falhou"
+    else -> status
+}
+
+fun defaultReminderSendAt(now: LocalDateTime = LocalDateTime.now()): String {
+    var time = now.plusMinutes(5).withSecond(0).withNano(0)
+    val extra = time.minute % 5
+    if (extra != 0) time = time.plusMinutes((5 - extra).toLong())
+    return time.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
+}
+
+@Serializable
 data class AttachConversationBody(@SerialName("conversation_id") val conversationId: String)
 
 @Serializable

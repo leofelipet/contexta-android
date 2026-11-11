@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
 
 class ParseTest {
@@ -71,6 +72,17 @@ class ParseTest {
         assertFalse(open.copy(dueAt = "2026-11-11").isOverdue(today))
         assertEquals("Pendente", taskStatusLabel("pending"))
         assertEquals("Concluída", taskStatusLabel("done"))
+    }
+
+    @Test
+    fun reminderSendAtRoundsUpFiveMinutes() {
+        val at = defaultReminderSendAt(LocalDateTime.of(2026, 11, 11, 10, 1, 30))
+        assertEquals("2026-11-11T10:10", at)
+        val page = contextaJson.decodeFromString<SchedulePage>(
+            """{"data":[{"id":"s1","title":"Diária","cron":"0 9 * * 1-5","enabled":true}]}""",
+        )
+        assertTrue(page.data.single().enabled)
+        assertEquals("Agendado", reminderStatusLabel("pending"))
     }
 
     @Test

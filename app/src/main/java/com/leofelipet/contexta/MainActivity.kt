@@ -1,6 +1,7 @@
 package com.leofelipet.contexta
 
 import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -61,6 +62,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
@@ -84,6 +86,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -124,6 +128,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 private enum class HomeTab(val label: String, val icon: ImageVector) {
     Conversas("Conversas", Icons.Filled.MailOutline),
@@ -139,6 +144,7 @@ private sealed interface Screen {
     data object More : Screen
     data class ContactDetail(val id: String, val title: String) : Screen
     data class TaskForm(val id: String?) : Screen
+    data object ReminderForm : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -179,6 +185,7 @@ class MainActivity : ComponentActivity() {
                         onOpen = { id, title -> stack = stack + Screen.Thread(id, title) },
                         onOpenContact = { stack = stack + Screen.ContactDetail(it.id, it.displayName) },
                         onOpenTask = { stack = stack + Screen.TaskForm(it) },
+                        onOpenReminder = { stack = stack + Screen.ReminderForm },
                         onUnauthorized = ::leave,
                         onMore = { stack = stack + Screen.More },
                         installApk = ::installApk,
@@ -186,6 +193,11 @@ class MainActivity : ComponentActivity() {
                     Screen.More -> MoreScreen(onBack = ::back, onLogout = ::leave)
                     is Screen.TaskForm -> TaskFormScreen(
                         api, prefs, cache, current.id,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
+                    )
+                    Screen.ReminderForm -> ReminderFormScreen(
+                        api, prefs, cache,
                         onBack = ::back,
                         onUnauthorized = ::leave,
                     )
@@ -406,6 +418,7 @@ private fun HomeScreen(
     onOpen: (String, String) -> Unit,
     onOpenContact: (Contact) -> Unit,
     onOpenTask: (String?) -> Unit,
+    onOpenReminder: () -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
     installApk: (File) -> Unit,
@@ -417,7 +430,7 @@ private fun HomeScreen(
                 HomeTab.Conversas -> InboxScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
                 HomeTab.Contatos -> ContactsScreen(api, prefs, cache, onOpenContact, onUnauthorized, onMore)
                 HomeTab.Busca -> SearchScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
-                HomeTab.Tarefas -> TasksScreen(api, prefs, cache, onOpenTask, onUnauthorized, onMore)
+                HomeTab.Tarefas -> TasksScreen(api, prefs, cache, onOpenTask, onOpenReminder, onUnauthorized, onMore)
             }
         }
         HomeBottomBar(tab, onTab)
@@ -956,6 +969,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, placehol
     )
 }
 
+private val taskSectionPills = listOf("tarefas" to "Tarefas", "schedules" to "Recorrentes", "reminders" to "Lembretes")
 private val taskFilterPills = listOf("" to "Abertas", "all" to "Todas", "overdue" to "Atrasadas")
 private val taskStatusPills = listOf(
     "pending" to "Pendente",
@@ -971,9 +985,11 @@ private fun TasksScreen(
     prefs: Prefs,
     cache: SessionCache,
     onOpenTask: (String?) -> Unit,
+    onOpenReminder: () -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
 ) {
+    var section by remember { mutableStateOf(cache.taskSection) }
     var items by remember { mutableStateOf(cache.tasks) }
     var cursor by remember { mutableStateOf(cache.taskCursor) }
     var query by remember { mutableStateOf(cache.taskQuery) }
@@ -1113,9 +1129,22 @@ private fun TasksScreen(
         containerColor = Paper,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            ContextaBar("Tarefas") {
-                IconButton(onClick = { onOpenTask(null) }) {
-                    Icon(Icons.Filled.Add, contentDescription = "Nova tarefa", tint = Ink)
+            ContextaBar(
+                when (section) {
+                    "schedules" -> "Recorrentes"
+                    "reminders" -> "Lembretes"
+                    else -> "Tarefas"
+                },
+            ) {
+                if (section == "tarefas") {
+                    IconButton(onClick = { onOpenTask(null) }) {
+                        Icon(Icons.Filled.Add, contentDescription = "Nova tarefa", tint = Ink)
+                    }
+                }
+                if (section == "reminders") {
+                    IconButton(onClick = onOpenReminder) {
+                        Icon(Icons.Filled.Add, contentDescription = "Novo lembrete", tint = Ink)
+                    }
                 }
                 IconButton(onClick = onMore) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "Mais", tint = Ink)
@@ -1124,6 +1153,18 @@ private fun TasksScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            TypePills(section, taskSectionPills) {
+                section = it
+                cache.taskSection = it
+            }
+            if (section == "schedules") {
+                SchedulesPane(api, prefs, cache, onUnauthorized)
+                return@Column
+            }
+            if (section == "reminders") {
+                RemindersPane(api, prefs, cache, onUnauthorized)
+                return@Column
+            }
             SearchField(query, { query = it }, "Buscar tarefa")
             TypePills(filter, taskFilterPills) { filter = it }
             when {
@@ -1140,6 +1181,439 @@ private fun TasksScreen(
                     }
                     if (loadingMore) item { ConversationSkeleton(rows = 2) }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SchedulesPane(api: Api, prefs: Prefs, cache: SessionCache, onUnauthorized: () -> Unit) {
+    var items by remember { mutableStateOf(cache.schedules) }
+    var cursor by remember { mutableStateOf(cache.scheduleCursor) }
+    var query by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.schedulesReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var confirmId by remember { mutableStateOf<String?>(null) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.scheduleListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as recorrências."
+    }
+
+    fun loadMore() {
+        val next = cache.scheduleCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.schedules(prefs.baseUrl, prefs.token, cursor = next, query = query)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.scheduleCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.schedules + page.data.filter { row -> cache.schedules.none { it.id == row.id } }
+                cache.schedules = merged
+                cache.scheduleCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(q: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            if (cache.schedules.isEmpty()) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) { api.schedules(prefs.baseUrl, prefs.token, query = q) }
+                if (mine != ticket[0]) return@launch
+                cache.schedules = page.data
+                cache.scheduleCursor = page.nextCursor
+                cache.schedulesReady = true
+                items = page.data
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                }
+            }
+        }
+    }
+
+    fun toggle(schedule: Schedule) {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    api.setScheduleEnabled(prefs.baseUrl, prefs.token, schedule.id, !schedule.enabled)
+                }
+                val next = items.map { if (it.id == schedule.id) it.copy(enabled = !schedule.enabled) else it }
+                items = next
+                cache.schedules = next
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun remove(id: String) {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteSchedule(prefs.baseUrl, prefs.token, id) }
+                val next = items.filter { it.id != id }
+                items = next
+                cache.schedules = next
+                confirmId = null
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                confirmId = null
+            }
+        }
+    }
+
+    LaunchedEffect(query) {
+        if (query.isNotEmpty()) delay(300)
+        reload(query)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    SearchField(query, { query = it }, "Buscar recorrência")
+    when {
+        loading && items.isEmpty() -> ConversationSkeleton()
+        items.isEmpty() -> EmptyHint(Icons.Filled.DateRange, error ?: "Nenhuma recorrência")
+        else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+            items(items, key = { it.id }) { schedule ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(schedule.title.ifBlank { "Recorrência" }, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            listOfNotNull(
+                                schedule.cron.ifBlank { null },
+                                schedule.nextRunAt?.let { "próxima ${formatListTime(it)}" },
+                                schedule.companyName.ifBlank { null },
+                            ).joinToString(" · "),
+                            color = Muted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    Switch(
+                        checked = schedule.enabled,
+                        onCheckedChange = { toggle(schedule) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Brand),
+                    )
+                    IconButton(onClick = { confirmId = schedule.id }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Muted)
+                    }
+                }
+                HorizontalDivider(color = Line)
+            }
+            if (loadingMore) item { ConversationSkeleton(rows = 2) }
+        }
+    }
+    confirmId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { confirmId = null },
+            title = { Text("Apagar recorrência?", color = Ink) },
+            text = { Text("As tarefas já criadas são mantidas.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove(id) }) { Text("Apagar", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmId = null }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+@Composable
+private fun RemindersPane(api: Api, prefs: Prefs, cache: SessionCache, onUnauthorized: () -> Unit) {
+    var items by remember { mutableStateOf(cache.reminders) }
+    var cursor by remember { mutableStateOf(cache.reminderCursor) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.remindersReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var confirmId by remember { mutableStateOf<String?>(null) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.reminderListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar os lembretes."
+    }
+
+    fun loadMore() {
+        val next = cache.reminderCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) { api.reminders(prefs.baseUrl, prefs.token, cursor = next) }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.reminderCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.reminders + page.data.filter { row -> cache.reminders.none { it.id == row.id } }
+                cache.reminders = merged
+                cache.reminderCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload() {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            if (cache.reminders.isEmpty()) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) { api.reminders(prefs.baseUrl, prefs.token) }
+                if (mine != ticket[0]) return@launch
+                cache.reminders = page.data
+                cache.reminderCursor = page.nextCursor
+                cache.remindersReady = true
+                items = page.data
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                }
+            }
+        }
+    }
+
+    fun remove(id: String) {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteReminder(prefs.baseUrl, prefs.token, id) }
+                val next = items.filter { it.id != id }
+                items = next
+                cache.reminders = next
+                confirmId = null
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                confirmId = null
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    when {
+        loading && items.isEmpty() -> ConversationSkeleton()
+        items.isEmpty() -> EmptyHint(Icons.Filled.Notifications, error ?: "Nenhum lembrete")
+        else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+            items(items, key = { it.id }) { reminder ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            reminder.title.ifBlank { reminder.message }.ifBlank { "Lembrete" },
+                            color = Ink,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            listOf(
+                                reminderStatusLabel(reminder.status),
+                                formatListTime(reminder.sendAt).ifBlank { reminder.sendAt },
+                            ).joinToString(" · "),
+                            color = Muted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    IconButton(onClick = { confirmId = reminder.id }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Muted)
+                    }
+                }
+                HorizontalDivider(color = Line)
+            }
+            if (loadingMore) item { ConversationSkeleton(rows = 2) }
+        }
+    }
+    confirmId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { confirmId = null },
+            title = { Text("Apagar lembrete?", color = Ink) },
+            text = { Text("Essa ação não pode ser desfeita.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove(id) }) { Text("Apagar", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmId = null }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+@Composable
+private fun ReminderFormScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var title by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var sendAt by remember { mutableStateOf(defaultReminderSendAt()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    fun pickWhen() {
+        val start = runCatching { LocalDateTime.parse(sendAt) }.getOrNull() ?: LocalDateTime.now().plusMinutes(5)
+        DatePickerDialog(
+            context,
+            { _, year, month, day ->
+                TimePickerDialog(
+                    context,
+                    { _, hour, minute ->
+                        sendAt = "%04d-%02d-%02dT%02d:%02d".format(year, month + 1, day, hour, minute)
+                    },
+                    start.hour,
+                    start.minute,
+                    true,
+                ).show()
+            },
+            start.year,
+            start.monthValue - 1,
+            start.dayOfMonth,
+        ).show()
+    }
+
+    fun save() {
+        val text = message.trim()
+        if (text.isBlank() || saving) return
+        saving = true
+        error = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    api.createReminder(
+                        prefs.baseUrl, prefs.token,
+                        CreateReminderBody(title = title.trim(), message = text, sendAt = sendAt),
+                    )
+                }
+                cache.invalidateReminders()
+                onBack()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                error = "Não foi possível criar o lembrete. Confira o horário e o Pushover."
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Novo lembrete", onBack) },
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedTextField(
+                title, { title = it },
+                label = { Text("Título (opcional)") },
+                singleLine = true,
+                colors = contextaFieldColors(),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                message, { message = it },
+                label = { Text("Mensagem") },
+                colors = contextaFieldColors(),
+                shape = RoundedCornerShape(12.dp),
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { pickWhen() }.padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Filled.DateRange, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+                Text(sendAt.replace('T', ' '), color = Ink, modifier = Modifier.weight(1f))
+            }
+            if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+            Button(
+                onClick = { save() },
+                enabled = !saving && message.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Brand, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(if (saving) "Salvando..." else "Agendar", fontWeight = FontWeight.SemiBold)
             }
         }
     }

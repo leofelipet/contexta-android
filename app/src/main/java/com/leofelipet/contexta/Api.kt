@@ -135,6 +135,43 @@ class Api(
         delete(apiUrl(base, "tasks/$id").toString(), token)
     }
 
+    fun schedules(base: String, token: String, cursor: String? = null, query: String = ""): SchedulePage {
+        val url = apiUrl(base, "task-schedules").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("q", query)
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun setScheduleEnabled(base: String, token: String, id: String, enabled: Boolean) {
+        patch(apiUrl(base, "task-schedules/$id").toString(), token, contextaJson.encodeToString(UpdateScheduleBody(enabled)))
+    }
+
+    fun deleteSchedule(base: String, token: String, id: String) {
+        delete(apiUrl(base, "task-schedules/$id").toString(), token)
+    }
+
+    fun reminders(base: String, token: String, cursor: String? = null, status: String = ""): ReminderPage {
+        val url = apiUrl(base, "reminders").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (status.isNotBlank()) addQueryParameter("status", status)
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun createReminder(base: String, token: String, body: CreateReminderBody): Reminder =
+        contextaJson.decodeFromString(post(apiUrl(base, "reminders").toString(), token, contextaJson.encodeToString(body)))
+
+    fun deleteReminder(base: String, token: String, id: String) {
+        delete(apiUrl(base, "reminders/$id").toString(), token)
+    }
+
     fun addDenylist(base: String, token: String, targetType: String, targetId: String, reason: String) {
         post(
             apiUrl(base, "denylist").toString(),
