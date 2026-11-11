@@ -85,6 +85,13 @@ class ParseTest {
         assertTrue(showDayChip("2026-11-11T15:00:00Z", null, zone))
         assertFalse(showDayChip("2026-11-11T15:00:00Z", "2026-11-11T18:00:00Z", zone))
         assertTrue(showDayChip("2026-11-11T15:00:00Z", "2026-11-10T15:00:00Z", zone))
+        assertTrue(nearLatestMessages(0))
+        assertTrue(nearLatestMessages(2))
+        assertFalse(nearLatestMessages(3))
+        assertFalse(showStickyDay("Hoje", nearLatest = true))
+        assertTrue(showStickyDay("Hoje", nearLatest = false))
+        assertTrue(showStickyDay("Ontem", nearLatest = true))
+        assertFalse(showStickyDay("", nearLatest = false))
     }
 
     @Test

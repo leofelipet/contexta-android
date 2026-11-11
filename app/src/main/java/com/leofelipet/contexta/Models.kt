@@ -245,6 +245,14 @@ fun showDayChip(current: String, older: String?, zone: ZoneId = ZoneId.systemDef
     return !sameDay(current, older, zone)
 }
 
+fun nearLatestMessages(firstVisibleIndex: Int): Boolean = firstVisibleIndex <= 2
+
+fun showStickyDay(label: String?, nearLatest: Boolean): Boolean {
+    if (label.isNullOrBlank()) return false
+    if (label == "Hoje" && nearLatest) return false
+    return true
+}
+
 fun formatClock(iso: String, zone: ZoneId = ZoneId.systemDefault()): String {
     val instant = parseInstant(iso, zone) ?: return if (iso.length >= 16) iso.substring(11, 16) else iso
     return DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(instant)

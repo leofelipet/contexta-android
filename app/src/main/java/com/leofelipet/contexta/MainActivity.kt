@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -85,6 +86,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,6 +96,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -1073,6 +1076,17 @@ private fun ThreadScreen(
     }
 
     val context = LocalContext.current
+    val stickyLabel by remember(items) {
+        derivedStateOf {
+            val top = listState.layoutInfo.visibleItemsInfo
+                .map { it.index }
+                .filter { it < items.size }
+                .maxOrNull() ?: return@derivedStateOf null
+            dayLabel(items[top].timestamp)
+        }
+    }
+    val stickyVisible = showStickyDay(stickyLabel, nearLatestMessages(listState.firstVisibleItemIndex))
+    var draft by remember(conversationId) { mutableStateOf("") }
     Scaffold(
         containerColor = Chat,
         topBar = {
@@ -1122,6 +1136,7 @@ private fun ThreadScreen(
                 HorizontalDivider(color = Line)
             }
         },
+        bottomBar = { ComposerPlaceholder(draft) { draft = it } },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             Image(
@@ -1133,18 +1148,20 @@ private fun ThreadScreen(
             when {
                 loading && items.isEmpty() -> MessageSkeleton()
                 items.isEmpty() -> EmptyHint(Icons.Filled.MailOutline, error ?: "Ainda não há mensagens")
-                else -> LazyColumn(
-                    Modifier.fillMaxSize(),
-                    state = listState,
-                    reverseLayout = true,
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                else -> {
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        state = listState,
+                        reverseLayout = true,
+                        contentPadding = PaddingValues(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                     itemsIndexed(items, key = { _, message -> message.id }) { index, message ->
                         val older = items.getOrNull(index + 1)?.timestamp
+                        val label = dayLabel(message.timestamp)
                         Column(Modifier.fillMaxWidth()) {
-                            if (showDayChip(message.timestamp, older)) {
-                                DayChip(dayLabel(message.timestamp))
+                            if (showDayChip(message.timestamp, older) && !(stickyVisible && label == stickyLabel)) {
+                                DayChip(label)
                             }
                             Bubble(message)
                         }
@@ -1157,6 +1174,10 @@ private fun ThreadScreen(
                         }
                     }
                     if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error) }
+                    }
+                    if (stickyVisible && !stickyLabel.isNullOrBlank()) {
+                        DayChip(stickyLabel!!, Modifier.align(Alignment.TopCenter).padding(top = 8.dp).zIndex(1f))
+                    }
                 }
             }
         }
@@ -1276,9 +1297,34 @@ private fun Bubble(message: Message) {
 }
 
 @Composable
-private fun DayChip(label: String) {
+private fun ComposerPlaceholder(value: String, onValueChange: (String) -> Unit) {
+    Column(Modifier.background(SurfaceWhite).navigationBarsPadding()) {
+        HorizontalDivider(color = Line)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            OutlinedTextField(
+                value,
+                onValueChange,
+                placeholder = { Text("Mensagem") },
+                singleLine = true,
+                colors = contextaFieldColors(),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = {}, enabled = false) {
+                Icon(Icons.Filled.Send, contentDescription = "Enviar", tint = Line)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayChip(label: String, modifier: Modifier = Modifier) {
     if (label.isBlank()) return
-    Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
         Text(
             label,
             color = Ink,
