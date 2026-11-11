@@ -20,6 +20,21 @@ class ParseTest {
     }
 
     @Test
+    fun conversationBlockedByIdOrContact() {
+        val page = contextaJson.decodeFromString<DenylistPage>(
+            """{"data":[{"id":"d1","target_type":"conversation","target_id":"c1"},{"id":"d2","target_type":"contact","target_id":"p9"}]}""",
+        )
+        val (conversations, contacts) = denylistSets(page.data)
+        val blocked = Conversation(id = "c1", title = "Ana")
+        val viaContact = Conversation(id = "c2", title = "Bo", contactId = "p9")
+        val open = Conversation(id = "c3", title = "Ca", type = "group")
+        assertTrue(blocked.isBlocked(conversations, contacts))
+        assertTrue(viaContact.isBlocked(conversations, contacts))
+        assertFalse(open.isBlocked(conversations, contacts))
+        assertTrue(open.isGroup)
+    }
+
+    @Test
     fun messageAudioFallsBackToTranscription() {
         val page = contextaJson.decodeFromString<MessagePage>(
             """{"data":[{"id":"m1","direction":"inbound","type":"audio","transcription":{"status":"done","text":" falou "}}]}""",

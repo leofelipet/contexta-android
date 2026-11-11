@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -531,6 +532,9 @@ private fun InboxScreen(
     var items by remember { mutableStateOf(cache.conversations) }
     var cursor by remember { mutableStateOf(cache.conversationCursor) }
     var query by remember { mutableStateOf(cache.conversationQuery) }
+    var type by remember { mutableStateOf(cache.conversationType) }
+    var blockedConversations by remember { mutableStateOf(cache.blockedConversationIds) }
+    var blockedContacts by remember { mutableStateOf(cache.blockedContactIds) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(!cache.conversationsReady) }
     var loadingMore by remember { mutableStateOf(false) }
@@ -544,6 +548,22 @@ private fun InboxScreen(
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as conversas."
     }
 
+    fun loadDenylist() {
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) { api.denylist(prefs.baseUrl, prefs.token) }
+                val sets = denylistSets(page.data)
+                cache.blockedConversationIds = sets.first
+                cache.blockedContactIds = sets.second
+                blockedConversations = sets.first
+                blockedContacts = sets.second
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     fun loadMore() {
         val next = cache.conversationCursor ?: return
         if (paging[0]) return
@@ -551,10 +571,11 @@ private fun InboxScreen(
         loadingMore = true
         val mine = ticket[0]
         val q = cache.conversationQuery
+        val kind = cache.conversationType
         scope.launch {
             try {
                 val page = withContext(Dispatchers.IO) {
-                    api.conversations(prefs.baseUrl, prefs.token, cursor = next, query = q)
+                    api.conversations(prefs.baseUrl, prefs.token, cursor = next, query = q, type = kind)
                 }
                 if (mine != ticket[0]) return@launch
                 if (page.data.isEmpty()) {
@@ -579,27 +600,34 @@ private fun InboxScreen(
         }
     }
 
-    fun reload(q: String) {
+    fun reload(q: String, kind: String) {
         val mine = ++ticket[0]
         paging[0] = true
+        if (kind != cache.conversationType) {
+            items = emptyList()
+            cursor = null
+            hasRows[0] = false
+            loading = true
+        }
         scope.launch {
             if (!hasRows[0]) loading = true
             error = null
             try {
                 val page = withContext(Dispatchers.IO) {
-                    api.conversations(prefs.baseUrl, prefs.token, query = q)
+                    api.conversations(prefs.baseUrl, prefs.token, query = q, type = kind)
                 }
                 if (mine != ticket[0]) return@launch
-                val sameQuery = q == cache.conversationQuery
-                val hadMore = sameQuery && cache.conversations.size > page.data.size
+                val sameFilter = q == cache.conversationQuery && kind == cache.conversationType
+                val hadMore = sameFilter && cache.conversations.size > page.data.size
                 val freshIds = page.data.map { it.id }.toSet()
                 val merged = if (hadMore) {
                     page.data + cache.conversations.filter { it.id !in freshIds }
                 } else {
                     page.data
                 }
-                if (!sameQuery) listState.scrollToItem(0)
+                if (!sameFilter) listState.scrollToItem(0)
                 cache.conversationQuery = q
+                cache.conversationType = kind
                 cache.conversations = merged
                 if (!hadMore) cache.conversationCursor = page.nextCursor
                 cache.conversationsReady = true
@@ -619,11 +647,13 @@ private fun InboxScreen(
         }
     }
 
-    LaunchedEffect(query) {
-        val warm = cache.conversationsReady && cache.conversationQuery == query
-        if (!warm && query.isNotEmpty()) delay(300)
-        reload(query)
+    LaunchedEffect(query, type) {
+        val warm = cache.conversationsReady && cache.conversationQuery == query && cache.conversationType == type
+        if (!warm && query.isNotEmpty() && type == cache.conversationType) delay(300)
+        reload(query, type)
     }
+
+    LaunchedEffect(prefs.baseUrl, prefs.token) { loadDenylist() }
 
     LaunchedEffect(listState) {
         snapshotFlow {
@@ -635,7 +665,7 @@ private fun InboxScreen(
     }
 
     DisposableEffect(prefs.baseUrl, prefs.token) {
-        val source = api.events(prefs.baseUrl, prefs.token) { reload(cache.conversationQuery) }
+        val source = api.events(prefs.baseUrl, prefs.token) { reload(cache.conversationQuery, cache.conversationType) }
         onDispose { source.cancel() }
     }
 
@@ -644,7 +674,7 @@ private fun InboxScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0), // above HomeBottomBar; default insets leave a blank strip
         topBar = {
             ContextaBar("Conversas") {
-                IconButton(onClick = { reload(query) }) {
+                IconButton(onClick = { reload(query, type); loadDenylist() }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "Atualizar", tint = Ink)
                 }
                 IconButton(onClick = onMore) {
@@ -674,16 +704,20 @@ private fun InboxScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            TypePills(type) { type = it }
             when {
                 loading && items.isEmpty() -> ConversationSkeleton()
                 items.isEmpty() -> EmptyHint(
                     Icons.Filled.MailOutline,
-                    error ?: if (query.isBlank()) "Nenhuma conversa ainda" else "Nenhuma conversa encontrada",
+                    error ?: if (query.isBlank() && type.isBlank()) "Nenhuma conversa ainda" else "Nenhuma conversa encontrada",
                 )
                 else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
                     if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
                     items(items, key = { it.id }) { conversation ->
-                        ConversationRow(conversation) { onOpen(conversation) }
+                        ConversationRow(
+                            conversation,
+                            blocked = conversation.isBlocked(blockedConversations, blockedContacts),
+                        ) { onOpen(conversation) }
                         HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
                     }
                     if (loadingMore) item { ConversationSkeleton(rows = 2) }
@@ -693,8 +727,33 @@ private fun InboxScreen(
     }
 }
 
+private val typePills = listOf("" to "Todas", "direct" to "Diretas", "group" to "Grupos")
+
 @Composable
-private fun ConversationRow(conversation: Conversation, onOpen: () -> Unit) {
+private fun TypePills(selected: String, onSelect: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        typePills.forEach { (value, label) ->
+            val on = selected == value
+            Text(
+                label,
+                color = if (on) Brand else Muted,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (on) BrandSoft else Paper)
+                    .clickable { onSelect(value) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConversationRow(conversation: Conversation, blocked: Boolean, onOpen: () -> Unit) {
     val whenLabel = formatListTime(conversation.lastMessageAt ?: conversation.lastMessage?.timestamp.orEmpty())
     Row(
         Modifier
@@ -718,15 +777,35 @@ private fun ConversationRow(conversation: Conversation, onOpen: () -> Unit) {
                 )
                 if (whenLabel.isNotBlank()) Text(whenLabel, color = Muted, fontSize = 12.sp)
             }
-            Text(
-                conversation.lastMessage?.displayText().orEmpty().ifBlank { "Sem mensagens" },
-                color = Muted,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            Row(
+                Modifier.padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    conversation.lastMessage?.displayText().orEmpty().ifBlank { "Sem mensagens" },
+                    color = Muted,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (conversation.isGroup) StatusChip("Grupo", Color(0xFFF1F5F9), Color(0xFF475569))
+                if (blocked) StatusChip("Bloqueada", Color(0xFFFFFBEB), Color(0xFF92400E), Icons.Filled.Warning)
+            }
         }
+    }
+}
+
+@Composable
+private fun StatusChip(label: String, background: Color, color: Color, icon: ImageVector? = null) {
+    Row(
+        Modifier.clip(RoundedCornerShape(20.dp)).background(background).padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (icon != null) Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(10.dp))
+        Text(label, color = color, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

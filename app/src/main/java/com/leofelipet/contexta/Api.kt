@@ -18,13 +18,28 @@ class Api(
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build(),
 ) {
-    fun conversations(base: String, token: String, cursor: String? = null, query: String = ""): ConversationPage {
+    fun conversations(
+        base: String,
+        token: String,
+        cursor: String? = null,
+        query: String = "",
+        type: String = "",
+    ): ConversationPage {
         val url = apiUrl(base, "conversations").newBuilder()
             .addQueryParameter("limit", "20")
             .apply {
                 if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
                 if (query.isNotBlank()) addQueryParameter("query", query)
+                if (type.isNotBlank()) addQueryParameter("type", type)
             }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun denylist(base: String, token: String): DenylistPage {
+        // shortcut: first 200, paginate if a denylist grows past that
+        val url = apiUrl(base, "denylist").newBuilder()
+            .addQueryParameter("limit", "200")
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
     }

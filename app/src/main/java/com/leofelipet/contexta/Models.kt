@@ -29,10 +29,42 @@ data class Conversation(
     val id: String,
     val title: String = "",
     val type: String = "",
+    @SerialName("contact_id") val contactId: String = "",
     @SerialName("last_message_at") val lastMessageAt: String? = null,
     @SerialName("last_message") val lastMessage: Preview? = null,
 ) {
     val displayTitle: String get() = title.ifBlank { "Conversa" }
+    val isGroup: Boolean get() = type.equals("group", ignoreCase = true)
+}
+
+@Serializable
+data class DenylistPage(
+    val data: List<DenylistEntry> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class DenylistEntry(
+    val id: String,
+    @SerialName("target_type") val targetType: String = "",
+    @SerialName("target_id") val targetId: String = "",
+)
+
+fun Conversation.isBlocked(conversationIds: Set<String>, contactIds: Set<String>): Boolean {
+    if (id in conversationIds) return true
+    return contactId.isNotBlank() && contactId in contactIds
+}
+
+fun denylistSets(entries: List<DenylistEntry>): Pair<Set<String>, Set<String>> {
+    val conversations = mutableSetOf<String>()
+    val contacts = mutableSetOf<String>()
+    for (entry in entries) {
+        when (entry.targetType) {
+            "conversation" -> conversations.add(entry.targetId)
+            "contact" -> contacts.add(entry.targetId)
+        }
+    }
+    return conversations to contacts
 }
 
 @Serializable
