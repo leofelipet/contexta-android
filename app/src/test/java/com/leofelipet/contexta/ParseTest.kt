@@ -78,6 +78,11 @@ class ParseTest {
     fun reminderSendAtRoundsUpFiveMinutes() {
         val at = defaultReminderSendAt(LocalDateTime.of(2026, 11, 11, 10, 1, 30))
         assertEquals("2026-11-11T10:10", at)
+        val zone = ZoneId.of("America/Sao_Paulo")
+        assertEquals(
+            LocalDateTime.of(2026, 11, 11, 10, 10).atZone(zone).toInstant().toEpochMilli(),
+            reminderTriggerMillis("2026-11-11T10:10", zone),
+        )
         val page = contextaJson.decodeFromString<SchedulePage>(
             """{"data":[{"id":"s1","title":"Diária","cron":"0 9 * * 1-5","enabled":true}]}""",
         )

@@ -252,17 +252,6 @@ class Api(
     fun mcpStatus(base: String, token: String): McpStatus =
         contextaJson.decodeFromString(get(apiUrl(base, "mcp/status").toString(), token))
 
-    fun pushoverStatus(base: String, token: String): PushoverStatus =
-        contextaJson.decodeFromString(get(apiUrl(base, "integrations/pushover").toString(), token))
-
-    fun sendPushover(base: String, token: String, title: String, message: String) {
-        post(
-            apiUrl(base, "integrations/pushover/send").toString(),
-            token,
-            contextaJson.encodeToString(SendPushoverBody(message = message, title = title)),
-        )
-    }
-
     fun emailAccounts(base: String, token: String): EmailAccountPage {
         val url = apiUrl(base, "email-accounts").newBuilder()
             .addQueryParameter("limit", "50")
@@ -326,7 +315,12 @@ class Api(
         }
     }
 
-    fun events(base: String, token: String, onMessages: () -> Unit): EventSource {
+    fun events(
+        base: String,
+        token: String,
+        onFailure: () -> Unit = {},
+        onMessages: () -> Unit,
+    ): EventSource {
         val request = authed(apiUrl(base, "events").toString(), token)
             .newBuilder()
             .header("Accept", "text/event-stream")
@@ -334,6 +328,10 @@ class Api(
         return EventSources.createFactory(client).newEventSource(request, object : EventSourceListener() {
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 if (type == "messages") onMessages()
+            }
+
+            override fun onFailure(eventSource: EventSource, t: Throwable?, response: okhttp3.Response?) {
+                onFailure()
             }
         })
     }

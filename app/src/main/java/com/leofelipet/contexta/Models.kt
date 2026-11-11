@@ -231,6 +231,15 @@ fun reminderStatusLabel(status: String) = when (status) {
     else -> status
 }
 
+fun reminderTriggerMillis(sendAt: String, zone: ZoneId = ZoneId.of("America/Sao_Paulo")): Long? {
+    if (sendAt.isBlank()) return null
+    try {
+        return LocalDateTime.parse(sendAt).atZone(zone).toInstant().toEpochMilli()
+    } catch (_: Exception) {
+    }
+    return parseInstant(sendAt, zone)?.toEpochMilli()
+}
+
 fun defaultReminderSendAt(now: LocalDateTime = LocalDateTime.now()): String {
     var time = now.plusMinutes(5).withSecond(0).withNano(0)
     val extra = time.minute % 5
@@ -329,18 +338,6 @@ data class McpStatus(
     val authentication: String = "",
     val tools: List<String> = emptyList(),
     @SerialName("last_access_at") val lastAccessAt: String? = null,
-)
-
-@Serializable
-data class PushoverStatus(
-    val configured: Boolean = false,
-    val enabled: Boolean = false,
-)
-
-@Serializable
-data class SendPushoverBody(
-    val message: String,
-    val title: String = "Contexta",
 )
 
 @Serializable

@@ -2,6 +2,7 @@ package com.leofelipet.contexta
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -166,6 +167,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
         val prefs = Prefs(this)
+        if (prefs.configured()) startEvents()
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+        }
         setContent {
             ContextaTheme {
                 var cache by remember { mutableStateOf(SessionCache()) }
@@ -177,6 +182,7 @@ class MainActivity : ComponentActivity() {
                     if (stack.size > 1) stack = stack.dropLast(1)
                 }
                 fun leave() {
+                    stopEvents()
                     prefs.clear()
                     cache = SessionCache()
                     tab = HomeTab.Conversas
@@ -187,7 +193,10 @@ class MainActivity : ComponentActivity() {
                     Screen.Setup -> SetupScreen(
                         api, prefs, ::installApk,
                         onHelp = { stack = stack + Screen.Help },
-                    ) { stack = listOf(Screen.Inbox) }
+                    ) {
+                        startEvents()
+                        stack = listOf(Screen.Inbox)
+                    }
                     Screen.Help -> HelpScreen(onBack = ::back)
                     Screen.Inbox -> HomeScreen(
                         api, prefs, cache, tab,
@@ -287,6 +296,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppState.enter()
+    }
+
+    override fun onPause() {
+        AppState.leave()
+        super.onPause()
     }
 
     private fun installApk(file: File) {
@@ -1444,6 +1463,7 @@ private fun RemindersPane(api: Api, prefs: Prefs, cache: SessionCache, onUnautho
     val ticket = remember { intArrayOf(0) }
     val scope = rememberCoroutineScope()
     val listState = cache.reminderListState
+    val context = LocalContext.current
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar os lembretes."
@@ -1509,6 +1529,7 @@ private fun RemindersPane(api: Api, prefs: Prefs, cache: SessionCache, onUnautho
         scope.launch {
             try {
                 withContext(Dispatchers.IO) { api.deleteReminder(prefs.baseUrl, prefs.token, id) }
+                Alarms.cancel(context, id)
                 val next = items.filter { it.id != id }
                 items = next
                 cache.reminders = next
@@ -1627,18 +1648,25 @@ private fun ReminderFormScreen(
         error = null
         scope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val created = withContext(Dispatchers.IO) {
                     api.createReminder(
                         prefs.baseUrl, prefs.token,
                         CreateReminderBody(title = title.trim(), message = text, sendAt = sendAt),
                     )
                 }
+                Alarms.schedule(
+                    context,
+                    created.id,
+                    created.sendAt.ifBlank { sendAt },
+                    created.title.ifBlank { title.trim().ifBlank { "Lembrete" } },
+                    created.message.ifBlank { text },
+                )
                 cache.invalidateReminders()
                 onBack()
             } catch (e: Unauthorized) {
                 onUnauthorized()
             } catch (_: Exception) {
-                error = "Não foi possível criar o lembrete. Confira o horário e o Pushover."
+                error = "Não foi possível criar o lembrete. Confira o horário."
             } finally {
                 saving = false
             }
@@ -3013,7 +3041,6 @@ private val integrationPills = listOf(
     "whatsapp" to "WhatsApp",
     "mcp" to "MCP",
     "email" to "E-mail",
-    "pushover" to "Pushover",
 )
 
 @Composable
@@ -3033,7 +3060,6 @@ private fun IntegrationsScreen(
             when (section) {
                 "mcp" -> McpPane(api, prefs, onUnauthorized)
                 "email" -> EmailPane(api, prefs, onUnauthorized)
-                "pushover" -> PushoverPane(api, prefs, onUnauthorized)
                 else -> WhatsappPane(api, prefs, onUnauthorized)
             }
         }
@@ -3207,76 +3233,6 @@ private fun EmailPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
                     }
                 }
                 HorizontalDivider(color = Line)
-            }
-        }
-    }
-}
-
-@Composable
-private fun PushoverPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
-    var status by remember { mutableStateOf<PushoverStatus?>(null) }
-    var title by remember { mutableStateOf("Contexta") }
-    var message by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var note by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var sending by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) {
-        loading = true
-        try {
-            status = withContext(Dispatchers.IO) { api.pushoverStatus(prefs.baseUrl, prefs.token) }
-        } catch (e: Unauthorized) {
-            onUnauthorized()
-        } catch (_: Exception) {
-            error = "Não foi possível carregar o Pushover."
-        } finally {
-            loading = false
-        }
-    }
-    val ready = status?.configured == true && status?.enabled == true
-    fun send() {
-        val text = message.trim()
-        if (text.isBlank() || sending || !ready) return
-        sending = true
-        error = null
-        note = null
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) { api.sendPushover(prefs.baseUrl, prefs.token, title.trim().ifBlank { "Contexta" }, text) }
-                note = "Notificação enviada."
-                message = ""
-            } catch (e: Unauthorized) {
-                onUnauthorized()
-            } catch (_: Exception) {
-                error = "Não foi possível enviar."
-            } finally {
-                sending = false
-            }
-        }
-    }
-    when {
-        loading && status == null -> ConversationSkeleton(rows = 4)
-        else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            val label = when {
-                status?.configured == true && status?.enabled == true -> "Ativa"
-                status?.configured == true -> "Desativada"
-                else -> "Não configurada"
-            }
-            Text(label, color = if (ready) Brand else Color(0xFF92400E), fontWeight = FontWeight.SemiBold)
-            if (!ready) Text("Configure o Pushover no painel web para enviar daqui.", color = Muted, fontSize = 13.sp)
-            OutlinedTextField(title, { title = it }, label = { Text("Título") }, singleLine = true, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(message, { message = it }, label = { Text("Mensagem") }, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), minLines = 4, modifier = Modifier.fillMaxWidth())
-            if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
-            if (note != null) Text(note!!, color = Brand)
-            Button(
-                onClick = { send() },
-                enabled = ready && !sending && message.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = Brand, contentColor = Color.White),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) {
-                Text(if (sending) "Enviando..." else "Enviar teste", fontWeight = FontWeight.SemiBold)
             }
         }
     }
