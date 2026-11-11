@@ -1,5 +1,6 @@
 package com.leofelipet.contexta
 
+import android.app.DatePickerDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -49,9 +50,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -119,6 +123,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.LocalDate
 
 private enum class HomeTab(val label: String, val icon: ImageVector) {
     Conversas("Conversas", Icons.Filled.MailOutline),
@@ -133,6 +138,7 @@ private sealed interface Screen {
     data object Inbox : Screen
     data object More : Screen
     data class ContactDetail(val id: String, val title: String) : Screen
+    data class TaskForm(val id: String?) : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -172,11 +178,17 @@ class MainActivity : ComponentActivity() {
                         onTab = { tab = it },
                         onOpen = { id, title -> stack = stack + Screen.Thread(id, title) },
                         onOpenContact = { stack = stack + Screen.ContactDetail(it.id, it.displayName) },
+                        onOpenTask = { stack = stack + Screen.TaskForm(it) },
                         onUnauthorized = ::leave,
                         onMore = { stack = stack + Screen.More },
                         installApk = ::installApk,
                     )
                     Screen.More -> MoreScreen(onBack = ::back, onLogout = ::leave)
+                    is Screen.TaskForm -> TaskFormScreen(
+                        api, prefs, cache, current.id,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
+                    )
                     is Screen.ContactDetail -> ContactDetailScreen(
                         api, prefs, cache, current.id, current.title,
                         onBack = ::back,
@@ -393,6 +405,7 @@ private fun HomeScreen(
     onTab: (HomeTab) -> Unit,
     onOpen: (String, String) -> Unit,
     onOpenContact: (Contact) -> Unit,
+    onOpenTask: (String?) -> Unit,
     onUnauthorized: () -> Unit,
     onMore: () -> Unit,
     installApk: (File) -> Unit,
@@ -404,7 +417,7 @@ private fun HomeScreen(
                 HomeTab.Conversas -> InboxScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
                 HomeTab.Contatos -> ContactsScreen(api, prefs, cache, onOpenContact, onUnauthorized, onMore)
                 HomeTab.Busca -> SearchScreen(api, prefs, cache, onOpen, onUnauthorized, onMore)
-                HomeTab.Tarefas -> ComingSoonScreen(tab, onMore)
+                HomeTab.Tarefas -> TasksScreen(api, prefs, cache, onOpenTask, onUnauthorized, onMore)
             }
         }
         HomeBottomBar(tab, onTab)
@@ -941,6 +954,476 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, placehol
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
     )
+}
+
+private val taskFilterPills = listOf("" to "Abertas", "all" to "Todas", "overdue" to "Atrasadas")
+private val taskStatusPills = listOf(
+    "pending" to "Pendente",
+    "in_progress" to "Andamento",
+    "blocked" to "Bloqueada",
+    "done" to "Concluída",
+    "cancelled" to "Cancelada",
+)
+
+@Composable
+private fun TasksScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onOpenTask: (String?) -> Unit,
+    onUnauthorized: () -> Unit,
+    onMore: () -> Unit,
+) {
+    var items by remember { mutableStateOf(cache.tasks) }
+    var cursor by remember { mutableStateOf(cache.taskCursor) }
+    var query by remember { mutableStateOf(cache.taskQuery) }
+    var filter by remember { mutableStateOf(cache.taskFilter) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.tasksReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val hasRows = remember { booleanArrayOf(cache.tasks.isNotEmpty()) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.taskListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as tarefas."
+    }
+
+    fun loadMore() {
+        val next = cache.taskCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val q = cache.taskQuery
+        val kind = cache.taskFilter
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.tasks(
+                        prefs.baseUrl, prefs.token, cursor = next, query = q,
+                        openOnly = kind.isEmpty(), overdue = kind == "overdue",
+                    )
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.taskCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.tasks + page.data.filter { row -> cache.tasks.none { it.id == row.id } }
+                cache.tasks = merged
+                cache.taskCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(q: String, kind: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        if (kind != cache.taskFilter) {
+            items = emptyList()
+            cursor = null
+            hasRows[0] = false
+            loading = true
+        }
+        scope.launch {
+            if (!hasRows[0]) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.tasks(
+                        prefs.baseUrl, prefs.token, query = q,
+                        openOnly = kind.isEmpty(), overdue = kind == "overdue",
+                    )
+                }
+                if (mine != ticket[0]) return@launch
+                val same = q == cache.taskQuery && kind == cache.taskFilter
+                val hadMore = same && cache.tasks.size > page.data.size
+                val freshIds = page.data.map { it.id }.toSet()
+                val merged = if (hadMore) page.data + cache.tasks.filter { it.id !in freshIds } else page.data
+                if (!same) listState.scrollToItem(0)
+                cache.taskQuery = q
+                cache.taskFilter = kind
+                cache.tasks = merged
+                if (!hadMore) cache.taskCursor = page.nextCursor
+                cache.tasksReady = true
+                items = merged
+                cursor = cache.taskCursor
+                hasRows[0] = merged.isNotEmpty()
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                    val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    if (shouldPrefetch(last, cache.tasks.size) && cache.taskCursor != null) loadMore()
+                }
+            }
+        }
+    }
+
+    fun complete(task: Task) {
+        if (task.closed) return
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    api.updateTask(prefs.baseUrl, prefs.token, task.id, UpdateTaskBody(status = "done"))
+                }
+                val keep = filter == "all"
+                val next = if (keep) items.map { if (it.id == task.id) it.copy(status = "done") else it } else items.filter { it.id != task.id }
+                items = next
+                cache.tasks = next
+                hasRows[0] = next.isNotEmpty()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    LaunchedEffect(query, filter) {
+        val warm = cache.tasksReady && cache.taskQuery == query && cache.taskFilter == filter
+        if (!warm && query.isNotEmpty() && filter == cache.taskFilter) delay(300)
+        reload(query, filter)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            ContextaBar("Tarefas") {
+                IconButton(onClick = { onOpenTask(null) }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Nova tarefa", tint = Ink)
+                }
+                IconButton(onClick = onMore) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Mais", tint = Ink)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            SearchField(query, { query = it }, "Buscar tarefa")
+            TypePills(filter, taskFilterPills) { filter = it }
+            when {
+                loading && items.isEmpty() -> ConversationSkeleton()
+                items.isEmpty() -> EmptyHint(
+                    Icons.Filled.CheckCircle,
+                    error ?: if (query.isBlank()) "Nenhuma tarefa" else "Nenhuma tarefa encontrada",
+                )
+                else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    items(items, key = { it.id }) { task ->
+                        TaskRow(task, onComplete = { complete(task) }) { onOpenTask(task.id) }
+                        HorizontalDivider(Modifier.padding(start = 52.dp), color = Line)
+                    }
+                    if (loadingMore) item { ConversationSkeleton(rows = 2) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskRow(task: Task, onComplete: () -> Unit, onOpen: () -> Unit) {
+    val overdue = task.isOverdue()
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        IconButton(onClick = onComplete, enabled = !task.closed, modifier = Modifier.size(28.dp)) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = if (task.closed) "Concluída" else "Marcar como concluída",
+                tint = if (task.status == "done") Brand else if (overdue) Color(0xFFB91C1C) else Line,
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(task.title.ifBlank { "Tarefa" }, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                StatusChip(
+                    taskStatusLabel(task.status),
+                    if (task.status == "done") BrandSoft else Paper,
+                    if (task.status == "done") Brand else Muted,
+                )
+                if (overdue) StatusChip("Atrasada", Color(0xFFFFFBEB), Color(0xFF92400E))
+                val due = task.dueAt?.let { formatListTime(it) }.orEmpty()
+                if (due.isNotBlank()) Text(due, color = Muted, fontSize = 12.sp)
+            }
+            if (task.companyName.isNotBlank()) {
+                Text(task.companyName, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskFormScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    taskId: String?,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var title by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("pending") }
+    var companyId by remember { mutableStateOf("") }
+    var dueAt by remember { mutableStateOf("") }
+    var companies by remember { mutableStateOf(cache.companies) }
+    var pickCompany by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(taskId != null) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val editing = taskId != null
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível salvar a tarefa."
+    }
+
+    LaunchedEffect(taskId) {
+        if (cache.companies.isEmpty()) {
+            try {
+                val page = withContext(Dispatchers.IO) { api.companies(prefs.baseUrl, prefs.token) }
+                cache.companies = page.data
+                companies = page.data
+            } catch (_: Exception) {
+            }
+        } else {
+            companies = cache.companies
+        }
+        if (taskId == null) {
+            loading = false
+            return@LaunchedEffect
+        }
+        loading = true
+        try {
+            val task = withContext(Dispatchers.IO) { api.task(prefs.baseUrl, prefs.token, taskId) }
+            title = task.title
+            description = task.description
+            status = task.status
+            companyId = task.companyId
+            dueAt = task.dueAt?.let { localDateOf(it)?.toString() }.orEmpty()
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar a tarefa."
+        } finally {
+            loading = false
+        }
+    }
+
+    fun save() {
+        val name = title.trim()
+        if (name.isBlank() || saving) return
+        saving = true
+        error = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (taskId == null) {
+                        api.createTask(
+                            prefs.baseUrl, prefs.token,
+                            CreateTaskBody(
+                                title = name,
+                                description = description.trim(),
+                                companyId = companyId,
+                                status = status,
+                                dueAt = dueAt.ifBlank { null },
+                            ),
+                        )
+                    } else {
+                        api.updateTask(
+                            prefs.baseUrl, prefs.token, taskId,
+                            UpdateTaskBody(
+                                title = name,
+                                description = description.trim(),
+                                companyId = companyId,
+                                status = status,
+                                dueAt = dueAt,
+                            ),
+                        )
+                    }
+                }
+                cache.invalidateTasks()
+                onBack()
+            } catch (e: Exception) {
+                fail(e)
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    fun remove() {
+        val id = taskId ?: return
+        saving = true
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteTask(prefs.baseUrl, prefs.token, id) }
+                cache.invalidateTasks()
+                onBack()
+            } catch (e: Exception) {
+                fail(e)
+            } finally {
+                saving = false
+                confirmDelete = false
+            }
+        }
+    }
+
+    val companyName = companies.firstOrNull { it.id == companyId }?.name ?: "Nenhuma"
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            ContextaBar(if (editing) "Editar tarefa" else "Nova tarefa", onBack) {
+                if (editing) {
+                    IconButton(onClick = { confirmDelete = true }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Muted)
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        if (loading) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                ConversationSkeleton(rows = 5)
+            }
+        } else {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedTextField(
+                    title, { title = it },
+                    label = { Text("Título") },
+                    singleLine = true,
+                    colors = contextaFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    description, { description = it },
+                    label = { Text("Descrição") },
+                    colors = contextaFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Status", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                TypePills(status, taskStatusPills) { status = it }
+                Text("Empresa", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { pickCompany = true }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Filled.AccountBox, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+                    Text(companyName, color = Ink, modifier = Modifier.weight(1f))
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Muted)
+                }
+                Text("Prazo", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            val start = localDateOf(dueAt) ?: LocalDate.now()
+                            DatePickerDialog(
+                                context,
+                                { _, year, month, day -> dueAt = "%04d-%02d-%02d".format(year, month + 1, day) },
+                                start.year,
+                                start.monthValue - 1,
+                                start.dayOfMonth,
+                            ).show()
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Filled.DateRange, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+                    Text(dueAt.ifBlank { "Sem prazo" }, color = if (dueAt.isBlank()) Muted else Ink, modifier = Modifier.weight(1f))
+                    if (dueAt.isNotBlank()) {
+                        IconButton(onClick = { dueAt = "" }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.Close, contentDescription = "Limpar prazo", tint = Muted)
+                        }
+                    }
+                }
+                if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+                Button(
+                    onClick = { save() },
+                    enabled = !saving && title.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Brand, contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                    Text(if (saving) "Salvando..." else "Salvar", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+    if (pickCompany) {
+        AlertDialog(
+            onDismissRequest = { pickCompany = false },
+            title = { Text("Empresa", color = Ink) },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    item { CompanyChoice("Nenhuma", selected = companyId.isBlank()) { companyId = ""; pickCompany = false } }
+                    items(companies, key = { it.id }) { company ->
+                        CompanyChoice(company.name, selected = company.id == companyId) { companyId = company.id; pickCompany = false }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickCompany = false }) { Text("Fechar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Apagar tarefa?", color = Ink) },
+            text = { Text("Essa ação não pode ser desfeita.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove() }) { Text("Apagar", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
 }
 
 private data class MoreItem(val label: String, val icon: ImageVector)

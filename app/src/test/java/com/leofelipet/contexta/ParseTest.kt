@@ -60,6 +60,20 @@ class ParseTest {
     }
 
     @Test
+    fun taskOverdueIgnoresClosed() {
+        val open = contextaJson.decodeFromString<Task>(
+            """{"id":"t1","title":"Ligar","status":"pending","due_at":"2020-01-01","company_name":"ACME"}""",
+        )
+        val done = open.copy(status = "done")
+        val today = LocalDate.of(2026, 11, 11)
+        assertTrue(open.isOverdue(today))
+        assertFalse(done.isOverdue(today))
+        assertFalse(open.copy(dueAt = "2026-11-11").isOverdue(today))
+        assertEquals("Pendente", taskStatusLabel("pending"))
+        assertEquals("Concluída", taskStatusLabel("done"))
+    }
+
+    @Test
     fun audioWithoutTranscriptShowsStatus() {
         val pending = contextaJson.decodeFromString<Message>(
             """{"id":"m2","type":"audio","transcription":{"status":"pending"}}""",

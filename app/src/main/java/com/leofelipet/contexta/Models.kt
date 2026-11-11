@@ -84,6 +84,62 @@ fun placeholderContactName(name: String, phone: String): Boolean {
 }
 
 @Serializable
+data class TaskPage(
+    val data: List<Task> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class Task(
+    val id: String,
+    val title: String = "",
+    val description: String = "",
+    val status: String = "pending",
+    @SerialName("company_id") val companyId: String = "",
+    @SerialName("company_name") val companyName: String = "",
+    @SerialName("due_at") val dueAt: String? = null,
+    @SerialName("conversation_id") val conversationId: String = "",
+    @SerialName("contact_id") val contactId: String = "",
+    @SerialName("conversation_title") val conversationTitle: String = "",
+    @SerialName("contact_name") val contactName: String = "",
+) {
+    val closed: Boolean get() = status == "done" || status == "cancelled"
+}
+
+@Serializable
+data class CreateTaskBody(
+    val title: String,
+    val description: String = "",
+    @SerialName("company_id") val companyId: String = "",
+    val status: String = "pending",
+    @SerialName("due_at") val dueAt: String? = null,
+)
+
+@Serializable
+data class UpdateTaskBody(
+    val title: String? = null,
+    val description: String? = null,
+    @SerialName("company_id") val companyId: String? = null,
+    val status: String? = null,
+    @SerialName("due_at") val dueAt: String? = null,
+)
+
+fun taskStatusLabel(status: String) = when (status) {
+    "pending" -> "Pendente"
+    "in_progress" -> "Em andamento"
+    "blocked" -> "Bloqueada"
+    "done" -> "Concluída"
+    "cancelled" -> "Cancelada"
+    else -> status
+}
+
+fun Task.isOverdue(today: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): Boolean {
+    if (closed || dueAt.isNullOrBlank()) return false
+    val date = localDateOf(dueAt, zone) ?: return false
+    return date.isBefore(today)
+}
+
+@Serializable
 data class AttachConversationBody(@SerialName("conversation_id") val conversationId: String)
 
 @Serializable

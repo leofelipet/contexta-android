@@ -24,6 +24,12 @@ class SessionCache {
     var searchCursor: String? = null
     var searchReady: Boolean = false
     val searchListState = LazyListState()
+    var taskQuery: String = ""
+    var taskFilter: String = ""
+    var tasks: List<Task> = emptyList()
+    var taskCursor: String? = null
+    var tasksReady: Boolean = false
+    val taskListState = LazyListState()
     val conversationListState = LazyListState()
     val threads = mutableMapOf<String, ThreadCache>()
 
@@ -46,7 +52,18 @@ class SessionCache {
         searchResults = emptyList()
         searchCursor = null
         searchReady = false
+        taskQuery = ""
+        taskFilter = ""
+        tasks = emptyList()
+        taskCursor = null
+        tasksReady = false
         threads.clear()
+    }
+
+    fun invalidateTasks() {
+        tasks = emptyList()
+        taskCursor = null
+        tasksReady = false
     }
 }
 

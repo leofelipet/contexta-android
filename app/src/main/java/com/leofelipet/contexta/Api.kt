@@ -102,6 +102,39 @@ class Api(
     fun contact(base: String, token: String, id: String): Contact =
         contextaJson.decodeFromString(get(apiUrl(base, "contacts/$id").toString(), token))
 
+    fun tasks(
+        base: String,
+        token: String,
+        cursor: String? = null,
+        query: String = "",
+        openOnly: Boolean = false,
+        overdue: Boolean = false,
+    ): TaskPage {
+        val url = apiUrl(base, "tasks").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("q", query)
+                if (openOnly) addQueryParameter("open_only", "1")
+                if (overdue) addQueryParameter("overdue", "1")
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun task(base: String, token: String, id: String): Task =
+        contextaJson.decodeFromString(get(apiUrl(base, "tasks/$id").toString(), token))
+
+    fun createTask(base: String, token: String, body: CreateTaskBody): Task =
+        contextaJson.decodeFromString(post(apiUrl(base, "tasks").toString(), token, contextaJson.encodeToString(body)))
+
+    fun updateTask(base: String, token: String, id: String, body: UpdateTaskBody): Task =
+        contextaJson.decodeFromString(patch(apiUrl(base, "tasks/$id").toString(), token, contextaJson.encodeToString(body)))
+
+    fun deleteTask(base: String, token: String, id: String) {
+        delete(apiUrl(base, "tasks/$id").toString(), token)
+    }
+
     fun addDenylist(base: String, token: String, targetType: String, targetId: String, reason: String) {
         post(
             apiUrl(base, "denylist").toString(),
@@ -161,6 +194,9 @@ class Api(
 
     private fun post(url: String, token: String, json: String): String =
         execute(authed(url, token).newBuilder().post(json.toRequestBody(jsonMedia)).build())
+
+    private fun patch(url: String, token: String, json: String): String =
+        execute(authed(url, token).newBuilder().patch(json.toRequestBody(jsonMedia)).build())
 
     private fun delete(url: String, token: String): String =
         execute(authed(url, token).newBuilder().delete().build())
