@@ -15,6 +15,14 @@ class Prefs(context: Context) {
 
     fun configured() = baseUrl.isNotBlank() && token.isNotBlank()
 
+    var notifyMessages: Boolean
+        get() = prefs.getBoolean("notify_messages", false)
+        set(value) { prefs.edit().putBoolean("notify_messages", value).apply() }
+
+    var notifyReminders: Boolean
+        get() = prefs.getBoolean("notify_reminders", true)
+        set(value) { prefs.edit().putBoolean("notify_reminders", value).apply() }
+
     fun clear() {
         prefs.edit().clear().apply()
     }

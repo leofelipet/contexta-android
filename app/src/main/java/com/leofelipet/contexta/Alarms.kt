@@ -7,6 +7,7 @@ import android.content.Intent
 
 object Alarms {
     fun schedule(context: Context, id: String, sendAt: String, title: String, message: String) {
+        if (!Prefs(context).notifyReminders) return
         val at = reminderTriggerMillis(sendAt) ?: return
         if (at <= System.currentTimeMillis()) return
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager

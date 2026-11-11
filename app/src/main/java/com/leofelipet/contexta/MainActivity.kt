@@ -156,6 +156,7 @@ private sealed interface Screen {
     data object Dashboard : Screen
     data object Maintenance : Screen
     data object Integrations : Screen
+    data object Notifications : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -217,6 +218,11 @@ class MainActivity : ComponentActivity() {
                         onMemories = { stack = stack + Screen.Memories },
                         onMaintenance = { stack = stack + Screen.Maintenance },
                         onIntegrations = { stack = stack + Screen.Integrations },
+                        onNotifications = { stack = stack + Screen.Notifications },
+                    )
+                    Screen.Notifications -> NotificationSettingsScreen(
+                        prefs,
+                        onBack = ::back,
                     )
                     Screen.Integrations -> IntegrationsScreen(
                         api, prefs,
@@ -3238,9 +3244,68 @@ private fun EmailPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
     }
 }
 
+@Composable
+private fun NotificationSettingsScreen(prefs: Prefs, onBack: () -> Unit) {
+    val context = LocalContext.current
+    var messages by remember { mutableStateOf(prefs.notifyMessages) }
+    var reminders by remember { mutableStateOf(prefs.notifyReminders) }
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Notificações", onBack) },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            Text(
+                "Escolha o que pode te interromper. Desligado não gera aviso — a lista no app continua igual.",
+                color = Muted,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(16.dp),
+            )
+            NotifyToggle(
+                "Mensagens",
+                "Cada WhatsApp novo com o app em segundo plano. Liga também a conexão contínua.",
+                messages,
+            ) { on ->
+                messages = on
+                prefs.notifyMessages = on
+                if (on) context.startEvents() else context.stopEvents()
+            }
+            HorizontalDivider(color = Line)
+            NotifyToggle(
+                "Lembretes",
+                "Horário que você agendou neste aparelho.",
+                reminders,
+            ) { on ->
+                reminders = on
+                prefs.notifyReminders = on
+                if (on) context.syncReminderAlarms()
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotifyToggle(title: String, hint: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Ink, fontWeight = FontWeight.SemiBold)
+            Text(hint, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onChecked,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Brand),
+        )
+    }
+}
+
 private data class MoreItem(val label: String, val icon: ImageVector, val key: String? = null)
 
 private val moreItems = listOf(
+    MoreItem("Notificações", Icons.Filled.Notifications, "notifications"),
     MoreItem("Visão geral", Icons.Filled.Home, "dashboard"),
     MoreItem("Empresas", Icons.Filled.AccountBox, "companies"),
     MoreItem("Memórias", Icons.Filled.Star, "memories"),
@@ -3258,6 +3323,7 @@ private fun MoreScreen(
     onMemories: () -> Unit,
     onMaintenance: () -> Unit,
     onIntegrations: () -> Unit,
+    onNotifications: () -> Unit,
 ) {
     Scaffold(
         containerColor = Paper,
@@ -3278,6 +3344,7 @@ private fun MoreScreen(
                     "memories" -> onMemories
                     "maintenance" -> onMaintenance
                     "integrations" -> onIntegrations
+                    "notifications" -> onNotifications
                     else -> null
                 }
                 Row(

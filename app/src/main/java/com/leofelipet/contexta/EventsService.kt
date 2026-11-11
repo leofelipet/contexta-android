@@ -28,7 +28,7 @@ class EventsService : Service() {
             startForeground(Notify.LIVE_ID, Notify.connected(this))
         }
         connect()
-        schedulePending()
+        syncReminderAlarms()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -56,35 +56,41 @@ class EventsService : Service() {
                 if (!stopped && mine == generation) handler.postDelayed({ connect() }, 4000)
             },
         ) {
-            if (!AppState.inForeground()) {
+            if (!AppState.inForeground() && Prefs(this).notifyMessages) {
                 Notify.alert(this, "Nova mensagem", "Há novidade no Contexta")
             }
         }
     }
 
-    private fun schedulePending() {
-        val prefs = Prefs(this)
-        if (!prefs.configured()) return
-        Thread {
-            try {
-                val page = api.reminders(prefs.baseUrl, prefs.token, status = "pending")
-                page.data.forEach { reminder ->
-                    Alarms.schedule(
-                        this,
-                        reminder.id,
-                        reminder.sendAt,
-                        reminder.title.ifBlank { "Lembrete" },
-                        reminder.message,
-                    )
-                }
-            } catch (_: Exception) {
+}
+
+fun Context.syncReminderAlarms() {
+    val prefs = Prefs(this)
+    if (!prefs.configured() || !prefs.notifyReminders) return
+    Thread {
+        try {
+            val page = Api().reminders(prefs.baseUrl, prefs.token, status = "pending")
+            page.data.forEach { reminder ->
+                Alarms.schedule(
+                    this,
+                    reminder.id,
+                    reminder.sendAt,
+                    reminder.title.ifBlank { "Lembrete" },
+                    reminder.message,
+                )
             }
-        }.start()
-    }
+        } catch (_: Exception) {
+        }
+    }.start()
 }
 
 fun Context.startEvents() {
-    if (!Prefs(this).configured()) return
+    val prefs = Prefs(this)
+    if (!prefs.configured()) return
+    if (!prefs.notifyMessages) {
+        syncReminderAlarms()
+        return
+    }
     val intent = Intent(this, EventsService::class.java)
     if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
 }
