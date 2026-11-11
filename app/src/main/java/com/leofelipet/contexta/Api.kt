@@ -1,8 +1,11 @@
 package com.leofelipet.contexta
 
+import kotlinx.serialization.encodeToString
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
@@ -52,6 +55,40 @@ class Api(
         return contextaJson.decodeFromString(get(url.toString(), token))
     }
 
+    fun conversation(base: String, token: String, id: String): Conversation =
+        contextaJson.decodeFromString(get(apiUrl(base, "conversations/$id").toString(), token))
+
+    fun companies(base: String, token: String): CompanyPage {
+        // shortcut: first 200, paginate if the company list grows past that
+        val url = apiUrl(base, "companies").newBuilder()
+            .addQueryParameter("limit", "200")
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun contact(base: String, token: String, id: String): Contact =
+        contextaJson.decodeFromString(get(apiUrl(base, "contacts/$id").toString(), token))
+
+    fun addDenylist(base: String, token: String, targetType: String, targetId: String, reason: String) {
+        post(
+            apiUrl(base, "denylist").toString(),
+            token,
+            contextaJson.encodeToString(AddDenylistBody(targetType, targetId, reason)),
+        )
+    }
+
+    fun attachConversation(base: String, token: String, companyId: String, conversationId: String) {
+        post(
+            apiUrl(base, "companies/$companyId/conversations").toString(),
+            token,
+            contextaJson.encodeToString(AttachConversationBody(conversationId)),
+        )
+    }
+
+    fun detachConversation(base: String, token: String, companyId: String, conversationId: String) {
+        delete(apiUrl(base, "companies/$companyId/conversations/$conversationId").toString(), token)
+    }
+
     fun githubLatest(): GithubRelease? {
         val request = Request.Builder()
             .url("https://api.github.com/repos/leofelipet/contexta-android/releases/latest")
@@ -87,8 +124,16 @@ class Api(
         })
     }
 
-    private fun get(url: String, token: String): String {
-        client.newCall(authed(url, token)).execute().use { response ->
+    private fun get(url: String, token: String): String = execute(authed(url, token))
+
+    private fun post(url: String, token: String, json: String): String =
+        execute(authed(url, token).newBuilder().post(json.toRequestBody(jsonMedia)).build())
+
+    private fun delete(url: String, token: String): String =
+        execute(authed(url, token).newBuilder().delete().build())
+
+    private fun execute(request: Request): String {
+        client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (response.code == 401) throw Unauthorized()
             if (!response.isSuccessful) throw ApiException(response.code)
@@ -101,6 +146,10 @@ class Api(
             .url(url)
             .header("Authorization", "Bearer $token")
             .build()
+
+    private companion object {
+        val jsonMedia = "application/json; charset=utf-8".toMediaType()
+    }
 
     private fun apiUrl(base: String, path: String) =
         normalizeBaseUrl(base).toHttpUrl().newBuilder().addPathSegments("api/v1/$path").build()

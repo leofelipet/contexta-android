@@ -11,6 +11,7 @@ class SessionCache {
     var conversationsReady: Boolean = false
     var blockedConversationIds: Set<String> = emptySet()
     var blockedContactIds: Set<String> = emptySet()
+    var companies: List<Company> = emptyList()
     val conversationListState = LazyListState()
     val threads = mutableMapOf<String, ThreadCache>()
 
@@ -22,6 +23,7 @@ class SessionCache {
         conversationsReady = false
         blockedConversationIds = emptySet()
         blockedContactIds = emptySet()
+        companies = emptyList()
         threads.clear()
     }
 }
@@ -29,5 +31,6 @@ class SessionCache {
 class ThreadCache(
     var items: List<Message> = emptyList(),
     var cursor: String? = null,
+    var detail: Conversation? = null,
     val listState: LazyListState = LazyListState(),
 )

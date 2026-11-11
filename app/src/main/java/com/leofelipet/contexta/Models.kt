@@ -30,12 +30,52 @@ data class Conversation(
     val title: String = "",
     val type: String = "",
     @SerialName("contact_id") val contactId: String = "",
+    @SerialName("company_id") val companyId: String = "",
+    @SerialName("company_name") val companyName: String = "",
     @SerialName("last_message_at") val lastMessageAt: String? = null,
     @SerialName("last_message") val lastMessage: Preview? = null,
 ) {
     val displayTitle: String get() = title.ifBlank { "Conversa" }
     val isGroup: Boolean get() = type.equals("group", ignoreCase = true)
 }
+
+@Serializable
+data class CompanyPage(
+    val data: List<Company> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class Company(
+    val id: String,
+    val name: String = "",
+)
+
+@Serializable
+data class Contact(
+    val id: String,
+    val name: String = "",
+    val phone: String = "",
+    @SerialName("push_name") val pushName: String = "",
+    @SerialName("company_name") val companyName: String = "",
+) {
+    val displayName: String
+        get() {
+            val named = name.trim().ifBlank { pushName.trim() }
+            if (named.isNotBlank() && named != phone) return named
+            return if (phone.isNotBlank()) "Contato sem nome" else "Contato"
+        }
+}
+
+@Serializable
+data class AttachConversationBody(@SerialName("conversation_id") val conversationId: String)
+
+@Serializable
+data class AddDenylistBody(
+    @SerialName("target_type") val targetType: String,
+    @SerialName("target_id") val targetId: String,
+    val reason: String = "",
+)
 
 @Serializable
 data class DenylistPage(
@@ -81,9 +121,12 @@ data class Message(
     val direction: String = "",
     val type: String = "",
     val text: String? = null,
+    val status: String? = null,
     val timestamp: String = "",
     val transcription: Transcription? = null,
-)
+) {
+    val isAudio: Boolean get() = type.equals("audio", ignoreCase = true)
+}
 
 @Serializable
 data class Transcription(
@@ -124,7 +167,19 @@ fun Message.displayText(): String {
     if (transcript.isNotEmpty()) return transcript
     val body = text?.trim().orEmpty()
     if (body.isNotEmpty()) return body
-    return if (type.equals("audio", ignoreCase = true)) "[Áudio]" else "[${type.ifBlank { "mensagem" }}]"
+    return if (isAudio) "[Áudio]" else "[${type.ifBlank { "mensagem" }}]"
+}
+
+fun Message.audioLabel(): String? {
+    if (!isAudio) return null
+    if (!transcription?.text?.trim().isNullOrEmpty()) return "Transcrição do áudio"
+    return when (transcription?.status?.lowercase()) {
+        "pending" -> "Transcrição pendente"
+        "processing" -> "Transcrição em processamento"
+        "retry" -> "Nova tentativa de transcrição"
+        "failed" -> "Não foi possível transcrever o áudio"
+        else -> "Áudio"
+    }
 }
 
 fun Preview.displayText(): String {

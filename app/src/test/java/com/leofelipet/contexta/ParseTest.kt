@@ -40,6 +40,19 @@ class ParseTest {
             """{"data":[{"id":"m1","direction":"inbound","type":"audio","transcription":{"status":"done","text":" falou "}}]}""",
         )
         assertEquals("falou", page.data.single().displayText())
+        assertEquals("Transcrição do áudio", page.data.single().audioLabel())
+    }
+
+    @Test
+    fun audioWithoutTranscriptShowsStatus() {
+        val pending = contextaJson.decodeFromString<Message>(
+            """{"id":"m2","type":"audio","transcription":{"status":"pending"}}""",
+        )
+        assertEquals("[Áudio]", pending.displayText())
+        assertEquals("Transcrição pendente", pending.audioLabel())
+        val text = contextaJson.decodeFromString<Message>("""{"id":"m3","type":"text","text":"oi","status":"sent"}""")
+        assertEquals(null, text.audioLabel())
+        assertEquals("sent", text.status)
     }
 
     @Test

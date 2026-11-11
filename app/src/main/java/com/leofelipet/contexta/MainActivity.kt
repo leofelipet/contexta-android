@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -51,9 +52,12 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -876,17 +880,111 @@ private fun ThreadScreen(
     val thread = remember(conversationId) { cache.threads.getOrPut(conversationId) { ThreadCache() } }
     var items by remember(conversationId) { mutableStateOf(thread.items) }
     var cursor by remember(conversationId) { mutableStateOf(thread.cursor) }
+    var detail by remember(conversationId) { mutableStateOf(thread.detail) }
+    var companies by remember { mutableStateOf(cache.companies) }
+    var blocked by remember(conversationId) {
+        mutableStateOf(conversationId in cache.blockedConversationIds)
+    }
     var error by remember(conversationId) { mutableStateOf<String?>(null) }
     var loading by remember(conversationId) { mutableStateOf(thread.items.isEmpty()) }
     var loadingMore by remember(conversationId) { mutableStateOf(false) }
+    var confirmBlock by remember(conversationId) { mutableStateOf(false) }
+    var pickCompany by remember(conversationId) { mutableStateOf(false) }
+    var contact by remember(conversationId) { mutableStateOf<Contact?>(null) }
+    var showContact by remember(conversationId) { mutableStateOf(false) }
     val paging = remember(conversationId) { booleanArrayOf(false) }
     val ticket = remember(conversationId) { intArrayOf(0) }
     val hasRows = remember(conversationId) { booleanArrayOf(thread.items.isNotEmpty()) }
     val scope = rememberCoroutineScope()
     val listState = thread.listState
+    val heading = detail?.displayTitle ?: title
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as mensagens."
+    }
+
+    fun markBlocked() {
+        cache.blockedConversationIds = cache.blockedConversationIds + conversationId
+        blocked = true
+    }
+
+    fun loadHeader() {
+        scope.launch {
+            try {
+                val conv = withContext(Dispatchers.IO) { api.conversation(prefs.baseUrl, prefs.token, conversationId) }
+                thread.detail = conv
+                detail = conv
+                blocked = conv.isBlocked(cache.blockedConversationIds, cache.blockedContactIds)
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+        if (cache.companies.isNotEmpty()) return
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) { api.companies(prefs.baseUrl, prefs.token) }
+                cache.companies = page.data
+                companies = page.data
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun setCompany(nextId: String) {
+        val current = detail?.companyId.orEmpty()
+        if (nextId == current) {
+            pickCompany = false
+            return
+        }
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (nextId.isNotBlank()) api.attachConversation(prefs.baseUrl, prefs.token, nextId, conversationId)
+                    else if (current.isNotBlank()) api.detachConversation(prefs.baseUrl, prefs.token, current, conversationId)
+                }
+                val name = companies.firstOrNull { it.id == nextId }?.name.orEmpty()
+                val updated = (detail ?: Conversation(id = conversationId, title = heading)).copy(companyId = nextId, companyName = name)
+                thread.detail = updated
+                detail = updated
+                pickCompany = false
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun block() {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    api.addDenylist(prefs.baseUrl, prefs.token, "conversation", conversationId, "Bloqueada pelo app")
+                }
+                markBlocked()
+                confirmBlock = false
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                confirmBlock = false
+            }
+        }
+    }
+
+    fun openContact() {
+        val id = detail?.contactId.orEmpty()
+        if (id.isBlank()) return
+        showContact = true
+        if (contact?.id == id) return
+        scope.launch {
+            try {
+                contact = withContext(Dispatchers.IO) { api.contact(prefs.baseUrl, prefs.token, id) }
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                showContact = false
+            }
+        }
     }
 
     fun loadOlder() {
@@ -957,7 +1055,10 @@ private fun ThreadScreen(
         }
     }
 
-    LaunchedEffect(conversationId) { reload() }
+    LaunchedEffect(conversationId) {
+        loadHeader()
+        reload()
+    }
     LaunchedEffect(listState, conversationId) {
         snapshotFlow {
             val max = listState.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
@@ -971,9 +1072,56 @@ private fun ThreadScreen(
         onDispose { source.cancel() }
     }
 
+    val context = LocalContext.current
     Scaffold(
         containerColor = Chat,
-        topBar = { ContextaBar(title, onBack) },
+        topBar = {
+            Column(Modifier.background(SurfaceWhite)) {
+                ContextaBar(
+                    heading,
+                    onBack,
+                    subtitle = when {
+                        blocked -> "Bloqueada"
+                        detail?.isGroup == true -> "Grupo"
+                        else -> null
+                    },
+                ) {
+                    if (blocked) {
+                        StatusChip("Bloqueada", Color(0xFFFFFBEB), Color(0xFF92400E), Icons.Filled.Warning)
+                    } else {
+                        IconButton(onClick = { confirmBlock = true }) {
+                            Icon(Icons.Filled.Warning, contentDescription = "Bloquear conversa", tint = Muted)
+                        }
+                    }
+                    if (!detail?.contactId.isNullOrBlank()) {
+                        IconButton(onClick = { openContact() }) {
+                            Icon(Icons.Filled.Info, contentDescription = "Ver contato", tint = Ink)
+                        }
+                    }
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { pickCompany = true }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Filled.AccountBox, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+                    Text("Empresa", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        detail?.companyName?.ifBlank { "Nenhuma" } ?: "Nenhuma",
+                        color = Ink,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Muted)
+                }
+                HorizontalDivider(color = Line)
+            }
+        },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             Image(
@@ -1013,11 +1161,89 @@ private fun ThreadScreen(
             }
         }
     }
+    if (confirmBlock) {
+        AlertDialog(
+            onDismissRequest = { confirmBlock = false },
+            title = { Text("Bloquear conversa?", color = Ink) },
+            text = {
+                Text(
+                    "Novas mensagens de “$heading” deixarão de ser salvas. O histórico existente permanece.",
+                    color = Muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { block() }) { Text("Bloquear", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmBlock = false }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+    if (pickCompany) {
+        AlertDialog(
+            onDismissRequest = { pickCompany = false },
+            title = { Text("Empresa", color = Ink) },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    item {
+                        CompanyChoice("Nenhuma", selected = detail?.companyId.isNullOrBlank()) { setCompany("") }
+                    }
+                    items(companies, key = { it.id }) { company ->
+                        CompanyChoice(company.name, selected = company.id == detail?.companyId) { setCompany(company.id) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickCompany = false }) { Text("Fechar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+    if (showContact) {
+        val person = contact
+        AlertDialog(
+            onDismissRequest = { showContact = false },
+            title = { Text(person?.displayName ?: "Contato", color = Ink) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (person == null) Text("Carregando…", color = Muted)
+                    else {
+                        if (person.phone.isNotBlank()) {
+                            TextButton(
+                                onClick = {
+                                    context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${person.phone}")))
+                                },
+                                contentPadding = PaddingValues(0.dp),
+                            ) {
+                                Icon(Icons.Filled.Phone, contentDescription = null, tint = Brand, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(8.dp))
+                                Text(person.phone, color = Brand, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        if (person.companyName.isNotBlank()) Text(person.companyName, color = Muted, fontSize = 14.sp)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showContact = false }) { Text("Fechar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+@Composable
+private fun CompanyChoice(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) Brand else Ink,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+    )
 }
 
 @Composable
 private fun Bubble(message: Message) {
     val inbound = message.direction != "outbound"
+    val audio = message.audioLabel()
     val shape = RoundedCornerShape(
         topStart = if (inbound) 4.dp else 16.dp,
         topEnd = if (inbound) 16.dp else 4.dp,
@@ -1035,13 +1261,16 @@ private fun Bubble(message: Message) {
             if (inbound && !message.sender.isNullOrBlank()) {
                 Text(message.sender, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
             }
+            if (audio != null) {
+                Text(audio, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, modifier = Modifier.padding(bottom = 2.dp))
+            }
             Text(message.displayText(), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
-            Text(
-                formatClock(message.timestamp),
-                color = Muted,
-                fontSize = 11.sp,
-                modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-            )
+            Row(Modifier.align(Alignment.End).padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!inbound && !message.status.isNullOrBlank()) {
+                    Text(message.status, color = Muted, fontSize = 11.sp)
+                }
+                Text(formatClock(message.timestamp), color = Muted, fontSize = 11.sp)
+            }
         }
     }
 }
@@ -1131,11 +1360,17 @@ private fun Bone(modifier: Modifier) {
 private fun ContextaBar(
     title: String,
     onBack: (() -> Unit)? = null,
+    subtitle: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     TopAppBar(
         title = {
-            Text(title, fontWeight = FontWeight.SemiBold, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column {
+                Text(title, fontWeight = FontWeight.SemiBold, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(subtitle, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
         },
         navigationIcon = {
             if (onBack != null) {
