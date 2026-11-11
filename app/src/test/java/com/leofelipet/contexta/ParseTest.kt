@@ -86,6 +86,19 @@ class ParseTest {
     }
 
     @Test
+    fun companyAndMemoryParse() {
+        val company = contextaJson.decodeFromString<Company>(
+            """{"id":"e1","name":"ACME","notes":"cliente","open_task_count":2,"contact_count":4}""",
+        )
+        assertEquals("ACME", company.name)
+        assertEquals(2, company.openTaskCount)
+        val memory = contextaJson.decodeFromString<Memory>(
+            """{"id":"n1","content":"Preferência por e-mail","source":"note","company_name":"ACME"}""",
+        )
+        assertEquals("Preferência por e-mail", memory.headline)
+    }
+
+    @Test
     fun audioWithoutTranscriptShowsStatus() {
         val pending = contextaJson.decodeFromString<Message>(
             """{"id":"m2","type":"audio","transcription":{"status":"pending"}}""",

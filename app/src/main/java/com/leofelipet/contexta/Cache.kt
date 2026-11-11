@@ -39,6 +39,16 @@ class SessionCache {
     var reminderCursor: String? = null
     var remindersReady: Boolean = false
     val reminderListState = LazyListState()
+    var companyQuery: String = ""
+    var companyList: List<Company> = emptyList()
+    var companyCursor: String? = null
+    var companiesReady: Boolean = false
+    val companyListState = LazyListState()
+    var memoryQuery: String = ""
+    var memories: List<Memory> = emptyList()
+    var memoryCursor: String? = null
+    var memoriesReady: Boolean = false
+    val memoryListState = LazyListState()
     val conversationListState = LazyListState()
     val threads = mutableMapOf<String, ThreadCache>()
 
@@ -73,6 +83,14 @@ class SessionCache {
         reminders = emptyList()
         reminderCursor = null
         remindersReady = false
+        companyQuery = ""
+        companyList = emptyList()
+        companyCursor = null
+        companiesReady = false
+        memoryQuery = ""
+        memories = emptyList()
+        memoryCursor = null
+        memoriesReady = false
         threads.clear()
     }
 
@@ -86,6 +104,19 @@ class SessionCache {
         reminders = emptyList()
         reminderCursor = null
         remindersReady = false
+    }
+
+    fun invalidateCompanies() {
+        companyList = emptyList()
+        companyCursor = null
+        companiesReady = false
+        companies = emptyList()
+    }
+
+    fun invalidateMemories() {
+        memories = emptyList()
+        memoryCursor = null
+        memoriesReady = false
     }
 }
 

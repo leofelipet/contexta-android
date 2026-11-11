@@ -28,6 +28,7 @@ class Api(
         query: String = "",
         type: String = "",
         contactId: String = "",
+        companyId: String = "",
     ): ConversationPage {
         val url = apiUrl(base, "conversations").newBuilder()
             .addQueryParameter("limit", "20")
@@ -36,17 +37,25 @@ class Api(
                 if (query.isNotBlank()) addQueryParameter("query", query)
                 if (type.isNotBlank()) addQueryParameter("type", type)
                 if (contactId.isNotBlank()) addQueryParameter("contact_id", contactId)
+                if (companyId.isNotBlank()) addQueryParameter("company_id", companyId)
             }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
     }
 
-    fun contacts(base: String, token: String, cursor: String? = null, query: String = ""): ContactPage {
+    fun contacts(
+        base: String,
+        token: String,
+        cursor: String? = null,
+        query: String = "",
+        companyId: String = "",
+    ): ContactPage {
         val url = apiUrl(base, "contacts").newBuilder()
             .addQueryParameter("limit", "20")
             .apply {
                 if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
                 if (query.isNotBlank()) addQueryParameter("query", query)
+                if (companyId.isNotBlank()) addQueryParameter("company_id", companyId)
             }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
@@ -91,12 +100,34 @@ class Api(
     fun conversation(base: String, token: String, id: String): Conversation =
         contextaJson.decodeFromString(get(apiUrl(base, "conversations/$id").toString(), token))
 
-    fun companies(base: String, token: String): CompanyPage {
-        // shortcut: first 200, paginate if the company list grows past that
+    fun companies(
+        base: String,
+        token: String,
+        cursor: String? = null,
+        query: String = "",
+        limit: Int = 200,
+    ): CompanyPage {
         val url = apiUrl(base, "companies").newBuilder()
-            .addQueryParameter("limit", "200")
+            .addQueryParameter("limit", limit.toString())
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("q", query)
+            }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun company(base: String, token: String, id: String): Company =
+        contextaJson.decodeFromString(get(apiUrl(base, "companies/$id").toString(), token))
+
+    fun createCompany(base: String, token: String, body: CreateCompanyBody): Company =
+        contextaJson.decodeFromString(post(apiUrl(base, "companies").toString(), token, contextaJson.encodeToString(body)))
+
+    fun updateCompany(base: String, token: String, id: String, body: UpdateCompanyBody): Company =
+        contextaJson.decodeFromString(patch(apiUrl(base, "companies/$id").toString(), token, contextaJson.encodeToString(body)))
+
+    fun deleteCompany(base: String, token: String, id: String) {
+        delete(apiUrl(base, "companies/$id").toString(), token)
     }
 
     fun contact(base: String, token: String, id: String): Contact =
@@ -109,6 +140,7 @@ class Api(
         query: String = "",
         openOnly: Boolean = false,
         overdue: Boolean = false,
+        companyId: String = "",
     ): TaskPage {
         val url = apiUrl(base, "tasks").newBuilder()
             .addQueryParameter("limit", "20")
@@ -117,6 +149,7 @@ class Api(
                 if (query.isNotBlank()) addQueryParameter("q", query)
                 if (openOnly) addQueryParameter("open_only", "1")
                 if (overdue) addQueryParameter("overdue", "1")
+                if (companyId.isNotBlank()) addQueryParameter("company_id", companyId)
             }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
@@ -170,6 +203,27 @@ class Api(
 
     fun deleteReminder(base: String, token: String, id: String) {
         delete(apiUrl(base, "reminders/$id").toString(), token)
+    }
+
+    fun memories(base: String, token: String, cursor: String? = null, query: String = ""): MemoryPage {
+        val url = apiUrl(base, "memories").newBuilder()
+            .addQueryParameter("limit", "20")
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("q", query)
+            }
+            .build()
+        return contextaJson.decodeFromString(get(url.toString(), token))
+    }
+
+    fun memory(base: String, token: String, id: String): Memory =
+        contextaJson.decodeFromString(get(apiUrl(base, "memories/$id").toString(), token))
+
+    fun createMemory(base: String, token: String, body: CreateMemoryBody): Memory =
+        contextaJson.decodeFromString(post(apiUrl(base, "memories").toString(), token, contextaJson.encodeToString(body)))
+
+    fun deleteMemory(base: String, token: String, id: String) {
+        delete(apiUrl(base, "memories/$id").toString(), token)
     }
 
     fun addDenylist(base: String, token: String, targetType: String, targetId: String, reason: String) {

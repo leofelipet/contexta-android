@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
@@ -145,6 +146,12 @@ private sealed interface Screen {
     data class ContactDetail(val id: String, val title: String) : Screen
     data class TaskForm(val id: String?) : Screen
     data object ReminderForm : Screen
+    data object Companies : Screen
+    data class CompanyDetail(val id: String, val title: String) : Screen
+    data class CompanyForm(val id: String?) : Screen
+    data object Memories : Screen
+    data class MemoryDetail(val id: String, val title: String) : Screen
+    data object MemoryForm : Screen
     data class Thread(val id: String, val title: String) : Screen
 }
 
@@ -190,7 +197,50 @@ class MainActivity : ComponentActivity() {
                         onMore = { stack = stack + Screen.More },
                         installApk = ::installApk,
                     )
-                    Screen.More -> MoreScreen(onBack = ::back, onLogout = ::leave)
+                    Screen.More -> MoreScreen(
+                        onBack = ::back,
+                        onLogout = ::leave,
+                        onCompanies = { stack = stack + Screen.Companies },
+                        onMemories = { stack = stack + Screen.Memories },
+                    )
+                    Screen.Companies -> CompaniesScreen(
+                        api, prefs, cache,
+                        onBack = ::back,
+                        onOpen = { stack = stack + Screen.CompanyDetail(it.id, it.name) },
+                        onCreate = { stack = stack + Screen.CompanyForm(null) },
+                        onUnauthorized = ::leave,
+                    )
+                    is Screen.CompanyDetail -> CompanyDetailScreen(
+                        api, prefs, cache, current.id, current.title,
+                        onBack = ::back,
+                        onEdit = { stack = stack + Screen.CompanyForm(current.id) },
+                        onOpenConversation = { id, title -> stack = stack + Screen.Thread(id, title) },
+                        onOpenContact = { stack = stack + Screen.ContactDetail(it.id, it.displayName) },
+                        onOpenTask = { stack = stack + Screen.TaskForm(it) },
+                        onUnauthorized = ::leave,
+                    )
+                    is Screen.CompanyForm -> CompanyFormScreen(
+                        api, prefs, cache, current.id,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
+                    )
+                    Screen.Memories -> MemoriesScreen(
+                        api, prefs, cache,
+                        onBack = ::back,
+                        onOpen = { stack = stack + Screen.MemoryDetail(it.id, it.headline) },
+                        onCreate = { stack = stack + Screen.MemoryForm },
+                        onUnauthorized = ::leave,
+                    )
+                    is Screen.MemoryDetail -> MemoryDetailScreen(
+                        api, prefs, cache, current.id, current.title,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
+                    )
+                    Screen.MemoryForm -> MemoryFormScreen(
+                        api, prefs, cache,
+                        onBack = ::back,
+                        onUnauthorized = ::leave,
+                    )
                     is Screen.TaskForm -> TaskFormScreen(
                         api, prefs, cache, current.id,
                         onBack = ::back,
@@ -1900,19 +1950,684 @@ private fun TaskFormScreen(
     }
 }
 
-private data class MoreItem(val label: String, val icon: ImageVector)
+@Composable
+private fun CompaniesScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onBack: () -> Unit,
+    onOpen: (Company) -> Unit,
+    onCreate: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var items by remember { mutableStateOf(cache.companyList) }
+    var cursor by remember { mutableStateOf(cache.companyCursor) }
+    var query by remember { mutableStateOf(cache.companyQuery) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.companiesReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.companyListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as empresas."
+    }
+
+    fun loadMore() {
+        val next = cache.companyCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val q = cache.companyQuery
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.companies(prefs.baseUrl, prefs.token, cursor = next, query = q, limit = 20)
+                }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.companyCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.companyList + page.data.filter { row -> cache.companyList.none { it.id == row.id } }
+                cache.companyList = merged
+                cache.companyCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(q: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            if (cache.companyList.isEmpty()) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) {
+                    api.companies(prefs.baseUrl, prefs.token, query = q, limit = 20)
+                }
+                if (mine != ticket[0]) return@launch
+                cache.companyQuery = q
+                cache.companyList = page.data
+                cache.companyCursor = page.nextCursor
+                cache.companiesReady = true
+                items = page.data
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(query) {
+        if (query.isNotEmpty()) delay(300)
+        reload(query)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            ContextaBar("Empresas", onBack) {
+                IconButton(onClick = onCreate) {
+                    Icon(Icons.Filled.Add, contentDescription = "Nova empresa", tint = Ink)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            SearchField(query, { query = it }, "Buscar empresa")
+            when {
+                loading && items.isEmpty() -> ConversationSkeleton()
+                items.isEmpty() -> EmptyHint(Icons.Filled.AccountBox, error ?: "Nenhuma empresa")
+                else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    items(items, key = { it.id }) { company ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onOpen(company) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(company.name, color = Ink, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${company.openTaskCount} abertas · ${company.contactCount} contatos",
+                                    color = Muted,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = Line)
+                    }
+                    if (loadingMore) item { ConversationSkeleton(rows = 2) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompanyDetailScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    companyId: String,
+    title: String,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onOpenConversation: (String, String) -> Unit,
+    onOpenContact: (Contact) -> Unit,
+    onOpenTask: (String?) -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var company by remember(companyId) { mutableStateOf(cache.companyList.firstOrNull { it.id == companyId }) }
+    var chats by remember(companyId) { mutableStateOf(listOf<Conversation>()) }
+    var people by remember(companyId) { mutableStateOf(listOf<Contact>()) }
+    var jobs by remember(companyId) { mutableStateOf(listOf<Task>()) }
+    var error by remember(companyId) { mutableStateOf<String?>(null) }
+    var loading by remember(companyId) { mutableStateOf(true) }
+    val heading = company?.name?.ifBlank { title } ?: title
+
+    LaunchedEffect(companyId) {
+        loading = true
+        error = null
+        try {
+            company = withContext(Dispatchers.IO) { api.company(prefs.baseUrl, prefs.token, companyId) }
+            chats = withContext(Dispatchers.IO) { api.conversations(prefs.baseUrl, prefs.token, companyId = companyId).data }
+            people = withContext(Dispatchers.IO) { api.contacts(prefs.baseUrl, prefs.token, companyId = companyId).data }
+            jobs = withContext(Dispatchers.IO) { api.tasks(prefs.baseUrl, prefs.token, openOnly = true, companyId = companyId).data }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar a empresa."
+        } finally {
+            loading = false
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            ContextaBar(heading, onBack) {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Filled.Create, contentDescription = "Editar", tint = Ink)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).background(SurfaceWhite)) {
+            if (loading && company == null) ConversationSkeleton(rows = 4)
+            else {
+                if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                if (!company?.notes.isNullOrBlank()) {
+                    Text(company!!.notes, color = Muted, modifier = Modifier.padding(16.dp))
+                }
+                Text("Tarefas abertas", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp))
+                if (jobs.isEmpty()) Text("Nenhuma", color = Muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                jobs.forEach { task ->
+                    TaskRow(task, onComplete = {}) { onOpenTask(task.id) }
+                    HorizontalDivider(Modifier.padding(start = 52.dp), color = Line)
+                }
+                Text("Conversas", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))
+                if (chats.isEmpty()) Text("Nenhuma", color = Muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                chats.forEach { conversation ->
+                    ConversationRow(conversation, blocked = conversation.isBlocked(cache.blockedConversationIds, cache.blockedContactIds)) {
+                        onOpenConversation(conversation.id, conversation.displayTitle)
+                    }
+                    HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
+                }
+                Text("Contatos", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))
+                if (people.isEmpty()) Text("Nenhum", color = Muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                people.forEach { contact ->
+                    ContactRow(contact) { onOpenContact(contact) }
+                    HorizontalDivider(Modifier.padding(start = 72.dp), color = Line)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompanyFormScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    companyId: String?,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(companyId != null) }
+    var saving by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val editing = companyId != null
+
+    LaunchedEffect(companyId) {
+        if (companyId == null) {
+            loading = false
+            return@LaunchedEffect
+        }
+        try {
+            val company = withContext(Dispatchers.IO) { api.company(prefs.baseUrl, prefs.token, companyId) }
+            name = company.name
+            notes = company.notes
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            error = "Não foi possível carregar a empresa."
+        } finally {
+            loading = false
+        }
+    }
+
+    fun save() {
+        val title = name.trim()
+        if (title.isBlank() || saving) return
+        saving = true
+        error = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (companyId == null) api.createCompany(prefs.baseUrl, prefs.token, CreateCompanyBody(title, notes.trim()))
+                    else api.updateCompany(prefs.baseUrl, prefs.token, companyId, UpdateCompanyBody(title, notes.trim()))
+                }
+                cache.invalidateCompanies()
+                onBack()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                error = "Não foi possível salvar a empresa."
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    fun remove() {
+        val id = companyId ?: return
+        saving = true
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteCompany(prefs.baseUrl, prefs.token, id) }
+                cache.invalidateCompanies()
+                onBack()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                error = "Não foi possível apagar."
+            } finally {
+                saving = false
+                confirmDelete = false
+            }
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            ContextaBar(if (editing) "Editar empresa" else "Nova empresa", onBack) {
+                if (editing) {
+                    IconButton(onClick = { confirmDelete = true }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Muted)
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        if (loading) ConversationSkeleton(rows = 3)
+        else Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedTextField(name, { name = it }, label = { Text("Nome") }, singleLine = true, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(notes, { notes = it }, label = { Text("Notas") }, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), minLines = 3, modifier = Modifier.fillMaxWidth())
+            if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+            Button(
+                onClick = { save() },
+                enabled = !saving && name.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Brand, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(if (saving) "Salvando..." else "Salvar", fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Apagar empresa?", color = Ink) },
+            text = { Text("Tarefas e contatos vinculados são mantidos, sem empresa.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove() }) { Text("Apagar", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+@Composable
+private fun MemoriesScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onBack: () -> Unit,
+    onOpen: (Memory) -> Unit,
+    onCreate: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var items by remember { mutableStateOf(cache.memories) }
+    var cursor by remember { mutableStateOf(cache.memoryCursor) }
+    var query by remember { mutableStateOf(cache.memoryQuery) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(!cache.memoriesReady) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val paging = remember { booleanArrayOf(false) }
+    val ticket = remember { intArrayOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = cache.memoryListState
+
+    fun fail(e: Exception) {
+        if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as memórias."
+    }
+
+    fun loadMore() {
+        val next = cache.memoryCursor ?: return
+        if (paging[0]) return
+        paging[0] = true
+        loadingMore = true
+        val mine = ticket[0]
+        val q = cache.memoryQuery
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) { api.memories(prefs.baseUrl, prefs.token, cursor = next, query = q) }
+                if (mine != ticket[0]) return@launch
+                if (page.data.isEmpty()) {
+                    cache.memoryCursor = null
+                    cursor = null
+                    return@launch
+                }
+                val merged = cache.memories + page.data.filter { row -> cache.memories.none { it.id == row.id } }
+                cache.memories = merged
+                cache.memoryCursor = page.nextCursor
+                items = merged
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    fun reload(q: String) {
+        val mine = ++ticket[0]
+        paging[0] = true
+        scope.launch {
+            if (cache.memories.isEmpty()) loading = true
+            error = null
+            try {
+                val page = withContext(Dispatchers.IO) { api.memories(prefs.baseUrl, prefs.token, query = q) }
+                if (mine != ticket[0]) return@launch
+                cache.memoryQuery = q
+                cache.memories = page.data
+                cache.memoryCursor = page.nextCursor
+                cache.memoriesReady = true
+                items = page.data
+                cursor = page.nextCursor
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loading = false
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(query) {
+        if (query.isNotEmpty()) delay(300)
+        reload(query)
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            Triple(last, items.size, cursor)
+        }.collect { (last, count, next) ->
+            if (next != null && shouldPrefetch(last, count)) loadMore()
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            ContextaBar("Memórias", onBack) {
+                IconButton(onClick = onCreate) {
+                    Icon(Icons.Filled.Add, contentDescription = "Nova memória", tint = Ink)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).background(SurfaceWhite)) {
+            SearchField(query, { query = it }, "Buscar memórias")
+            when {
+                loading && items.isEmpty() -> ConversationSkeleton()
+                items.isEmpty() -> EmptyHint(Icons.Filled.Star, error ?: "Nenhuma memória")
+                else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                    items(items, key = { it.id }) { memory ->
+                        Column(Modifier.fillMaxWidth().clickable { onOpen(memory) }.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Text(memory.headline, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                listOfNotNull(
+                                    if (memory.source == "message") "Mensagem" else "Nota",
+                                    memory.companyName.ifBlank { null },
+                                ).joinToString(" · "),
+                                color = Muted,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                        HorizontalDivider(color = Line)
+                    }
+                    if (loadingMore) item { ConversationSkeleton(rows = 2) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryDetailScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    memoryId: String,
+    title: String,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var memory by remember(memoryId) { mutableStateOf(cache.memories.firstOrNull { it.id == memoryId }) }
+    var error by remember(memoryId) { mutableStateOf<String?>(null) }
+    var loading by remember(memoryId) { mutableStateOf(memory == null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val heading = memory?.headline ?: title
+
+    LaunchedEffect(memoryId) {
+        try {
+            memory = withContext(Dispatchers.IO) { api.memory(prefs.baseUrl, prefs.token, memoryId) }
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            if (memory == null) error = "Não foi possível carregar a memória."
+        } finally {
+            loading = false
+        }
+    }
+
+    fun remove() {
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteMemory(prefs.baseUrl, prefs.token, memoryId) }
+                cache.invalidateMemories()
+                onBack()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                confirmDelete = false
+            }
+        }
+    }
+
+    Scaffold(
+        containerColor = Paper,
+        topBar = {
+            ContextaBar(heading, onBack) {
+                IconButton(onClick = { confirmDelete = true }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Muted)
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            if (loading) ConversationSkeleton(rows = 3)
+            else {
+                if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+                Text(memory?.content ?: "", color = Ink, fontSize = 16.sp, lineHeight = 22.sp)
+                val meta = listOfNotNull(memory?.companyName?.ifBlank { null }, memory?.contactName?.ifBlank { null })
+                if (meta.isNotEmpty()) Text(meta.joinToString(" · "), color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 16.dp))
+            }
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Apagar memória?", color = Ink) },
+            text = { Text("Essa ação não pode ser desfeita.", color = Muted) },
+            confirmButton = {
+                TextButton(onClick = { remove() }) { Text("Apagar", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancelar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+@Composable
+private fun MemoryFormScreen(
+    api: Api,
+    prefs: Prefs,
+    cache: SessionCache,
+    onBack: () -> Unit,
+    onUnauthorized: () -> Unit,
+) {
+    var title by remember { mutableStateOf("") }
+    var content by remember { mutableStateOf("") }
+    var companyId by remember { mutableStateOf("") }
+    var companies by remember { mutableStateOf(cache.companies) }
+    var pickCompany by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        if (companies.isNotEmpty()) return@LaunchedEffect
+        try {
+            val page = withContext(Dispatchers.IO) { api.companies(prefs.baseUrl, prefs.token) }
+            cache.companies = page.data
+            companies = page.data
+        } catch (_: Exception) {
+        }
+    }
+
+    fun save() {
+        val body = content.trim()
+        if (body.isBlank() || saving) return
+        saving = true
+        error = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    api.createMemory(
+                        prefs.baseUrl, prefs.token,
+                        CreateMemoryBody(title = title.trim(), content = body, companyId = companyId),
+                    )
+                }
+                cache.invalidateMemories()
+                onBack()
+            } catch (e: Unauthorized) {
+                onUnauthorized()
+            } catch (_: Exception) {
+                error = "Não foi possível criar a memória."
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    val companyName = companies.firstOrNull { it.id == companyId }?.name ?: "Nenhuma"
+    Scaffold(
+        containerColor = Paper,
+        topBar = { ContextaBar("Nova memória", onBack) },
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedTextField(title, { title = it }, label = { Text("Título (opcional)") }, singleLine = true, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(content, { content = it }, label = { Text("Conteúdo") }, colors = contextaFieldColors(), shape = RoundedCornerShape(12.dp), minLines = 5, modifier = Modifier.fillMaxWidth())
+            Text("Empresa", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { pickCompany = true }.padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Filled.AccountBox, contentDescription = null, tint = Brand, modifier = Modifier.size(18.dp))
+                Text(companyName, color = Ink, modifier = Modifier.weight(1f))
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Muted)
+            }
+            if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+            Button(
+                onClick = { save() },
+                enabled = !saving && content.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Brand, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(if (saving) "Salvando..." else "Salvar", fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+    if (pickCompany) {
+        AlertDialog(
+            onDismissRequest = { pickCompany = false },
+            title = { Text("Empresa", color = Ink) },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    item { CompanyChoice("Nenhuma", selected = companyId.isBlank()) { companyId = ""; pickCompany = false } }
+                    items(companies, key = { it.id }) { company ->
+                        CompanyChoice(company.name, selected = company.id == companyId) { companyId = company.id; pickCompany = false }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickCompany = false }) { Text("Fechar", color = Muted) } },
+            containerColor = SurfaceWhite,
+        )
+    }
+}
+
+private data class MoreItem(val label: String, val icon: ImageVector, val key: String? = null)
 
 private val moreItems = listOf(
     MoreItem("Visão geral", Icons.Filled.Home),
-    MoreItem("Empresas", Icons.Filled.AccountBox),
-    MoreItem("Memórias", Icons.Filled.Star),
+    MoreItem("Empresas", Icons.Filled.AccountBox, "companies"),
+    MoreItem("Memórias", Icons.Filled.Star, "memories"),
     MoreItem("Manutenção", Icons.Filled.Build),
     MoreItem("Integrações", Icons.Filled.Share),
     MoreItem("Sistema", Icons.Filled.Settings),
 )
 
 @Composable
-private fun MoreScreen(onBack: () -> Unit, onLogout: () -> Unit) {
+private fun MoreScreen(
+    onBack: () -> Unit,
+    onLogout: () -> Unit,
+    onCompanies: () -> Unit,
+    onMemories: () -> Unit,
+) {
     Scaffold(
         containerColor = Paper,
         topBar = { ContextaBar("Mais", onBack) },
@@ -1926,8 +2641,16 @@ private fun MoreScreen(onBack: () -> Unit, onLogout: () -> Unit) {
                 modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
             )
             moreItems.forEach { item ->
+                val open = when (item.key) {
+                    "companies" -> onCompanies
+                    "memories" -> onMemories
+                    else -> null
+                }
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .then(if (open != null) Modifier.clickable(onClick = open) else Modifier)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -1939,7 +2662,7 @@ private fun MoreScreen(onBack: () -> Unit, onLogout: () -> Unit) {
                     }
                     Column(Modifier.weight(1f)) {
                         Text(item.label, color = Ink, fontWeight = FontWeight.SemiBold)
-                        Text("Em breve", color = Muted, fontSize = 12.sp)
+                        Text(if (open == null) "Em breve" else "Abrir", color = Muted, fontSize = 12.sp)
                     }
                 }
                 HorizontalDivider(Modifier.padding(start = 64.dp), color = Line)

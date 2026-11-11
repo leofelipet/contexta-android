@@ -49,6 +49,46 @@ data class CompanyPage(
 data class Company(
     val id: String,
     val name: String = "",
+    val notes: String = "",
+    val rules: String = "",
+    @SerialName("open_task_count") val openTaskCount: Int = 0,
+    @SerialName("task_count") val taskCount: Int = 0,
+    @SerialName("contact_count") val contactCount: Int = 0,
+    @SerialName("conversation_count") val conversationCount: Int = 0,
+)
+
+@Serializable
+data class CreateCompanyBody(val name: String, val notes: String = "")
+
+@Serializable
+data class UpdateCompanyBody(val name: String, val notes: String = "")
+
+@Serializable
+data class MemoryPage(
+    val data: List<Memory> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+data class Memory(
+    val id: String,
+    val title: String = "",
+    val content: String = "",
+    val source: String = "note",
+    @SerialName("company_id") val companyId: String = "",
+    @SerialName("company_name") val companyName: String = "",
+    @SerialName("contact_name") val contactName: String = "",
+    @SerialName("conversation_title") val conversationTitle: String = "",
+) {
+    val headline: String get() = title.ifBlank { content }.ifBlank { "Memória" }
+}
+
+@Serializable
+data class CreateMemoryBody(
+    val title: String = "",
+    val content: String,
+    val source: String = "note",
+    @SerialName("company_id") val companyId: String = "",
 )
 
 @Serializable
