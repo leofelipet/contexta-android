@@ -20,6 +20,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -4445,7 +4446,9 @@ private fun Bubble(message: Message) {
             if (audio != null) {
                 Text(audio, color = Brand, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, modifier = Modifier.padding(bottom = 2.dp))
             }
-            Text(message.displayText(), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
+            SelectionContainer {
+                Text(message.displayText(), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
+            }
             Row(Modifier.align(Alignment.End).padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (!inbound && !message.status.isNullOrBlank()) {
                     Text(message.status, color = Muted, fontSize = 11.sp)
