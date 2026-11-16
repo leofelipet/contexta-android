@@ -130,10 +130,13 @@ class Api(
         delete(apiUrl(base, "conversations/$id").toString(), token)
     }
 
-    fun messages(base: String, token: String, conversationId: String, cursor: String? = null): MessagePage {
+    fun messages(base: String, token: String, conversationId: String, cursor: String? = null, query: String = ""): MessagePage {
         val url = apiUrl(base, "conversations/$conversationId/messages").newBuilder()
             .addQueryParameter("limit", "20")
-            .apply { if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor) }
+            .apply {
+                if (!cursor.isNullOrBlank()) addQueryParameter("cursor", cursor)
+                if (query.isNotBlank()) addQueryParameter("query", query)
+            }
             .build()
         return contextaJson.decodeFromString(get(url.toString(), token))
     }

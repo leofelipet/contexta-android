@@ -19,6 +19,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.horizontalScroll
@@ -4040,6 +4041,10 @@ private fun ThreadScreen(
     val scope = rememberCoroutineScope()
     val listState = thread.listState
     val heading = detail?.displayTitle ?: title
+    var searchOpen by remember(conversationId) { mutableStateOf(false) }
+    var searchQuery by remember(conversationId) { mutableStateOf("") }
+    var results by remember(conversationId) { mutableStateOf<List<Message>?>(null) }
+    var highlightId by remember(conversationId) { mutableStateOf("") }
 
     fun fail(e: Exception) {
         if (e is Unauthorized) onUnauthorized() else error = "Não foi possível carregar as mensagens."
@@ -4219,6 +4224,67 @@ private fun ThreadScreen(
         }
     }
 
+    fun closeSearch() {
+        searchOpen = false
+        searchQuery = ""
+        results = null
+        highlightId = ""
+    }
+
+    // Pages older messages in until the hit is loaded, then scrolls to it.
+    fun jumpTo(id: String) {
+        val mine = ticket[0]
+        paging[0] = true
+        loadingMore = true
+        scope.launch {
+            try {
+                while (thread.items.none { it.id == id }) {
+                    val next = thread.cursor ?: break
+                    val page = withContext(Dispatchers.IO) {
+                        api.messages(prefs.baseUrl, prefs.token, conversationId, cursor = next)
+                    }
+                    if (mine != ticket[0]) return@launch
+                    val merged = thread.items + page.data.filter { row -> thread.items.none { it.id == row.id } }
+                    thread.items = merged
+                    thread.cursor = if (page.data.isEmpty()) null else page.nextCursor
+                    items = merged
+                    cursor = thread.cursor
+                    hasRows[0] = merged.isNotEmpty()
+                }
+                results = null
+                highlightId = id
+                val index = items.indexOfFirst { it.id == id }
+                if (index >= 0) listState.scrollToItem(index)
+            } catch (e: Exception) {
+                if (mine == ticket[0]) fail(e)
+            } finally {
+                if (mine == ticket[0]) {
+                    paging[0] = false
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) {
+            results = null
+            return@LaunchedEffect
+        }
+        delay(300)
+        try {
+            results = withContext(Dispatchers.IO) {
+                api.messages(prefs.baseUrl, prefs.token, conversationId, query = q)
+            }.data
+        } catch (e: Unauthorized) {
+            onUnauthorized()
+        } catch (_: Exception) {
+            results = emptyList()
+        }
+    }
+    BackHandler(enabled = searchOpen) { closeSearch() }
+
     LaunchedEffect(conversationId) {
         loadHeader()
         reload()
@@ -4261,6 +4327,13 @@ private fun ThreadScreen(
                         else -> null
                     },
                 ) {
+                    IconButton(onClick = { if (searchOpen) closeSearch() else searchOpen = true }) {
+                        Icon(
+                            if (searchOpen) Icons.Filled.Close else Icons.Filled.Search,
+                            contentDescription = if (searchOpen) "Fechar busca" else "Buscar nesta conversa",
+                            tint = Ink,
+                        )
+                    }
                     if (blocked) {
                         StatusChip("Bloqueada", Color(0xFFFFFBEB), Color(0xFF92400E), Icons.Filled.Warning)
                     } else {
@@ -4294,6 +4367,7 @@ private fun ThreadScreen(
                     )
                     Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = Muted)
                 }
+                if (searchOpen) SearchField(searchQuery, { searchQuery = it }, "Buscar nesta conversa")
                 HorizontalDivider(color = Line)
             }
         },
@@ -4324,7 +4398,7 @@ private fun ThreadScreen(
                             if (showDayChip(message.timestamp, older) && !(stickyVisible && label == stickyLabel)) {
                                 DayChip(label)
                             }
-                            Bubble(message)
+                            Bubble(message, highlighted = message.id == highlightId)
                         }
                     }
                     if (loadingMore) {
@@ -4338,6 +4412,20 @@ private fun ThreadScreen(
                     }
                     if (stickyVisible && !stickyLabel.isNullOrBlank()) {
                         DayChip(stickyLabel!!, Modifier.align(Alignment.TopCenter).padding(top = 8.dp).zIndex(1f))
+                    }
+                }
+            }
+            results?.let { hits ->
+                Box(Modifier.fillMaxSize().background(SurfaceWhite).zIndex(2f)) {
+                    if (hits.isEmpty()) {
+                        EmptyHint(Icons.Filled.Search, "Nenhuma mensagem encontrada")
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(hits, key = { it.id }) { hit ->
+                                SearchRow(hit) { jumpTo(hit.id) }
+                                HorizontalDivider(color = Line)
+                            }
+                        }
                     }
                 }
             }
@@ -4423,7 +4511,7 @@ private fun CompanyChoice(label: String, selected: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun Bubble(message: Message) {
+private fun Bubble(message: Message, highlighted: Boolean = false) {
     val inbound = message.direction != "outbound"
     val audio = message.audioLabel()
     val shape = RoundedCornerShape(
@@ -4437,6 +4525,7 @@ private fun Bubble(message: Message) {
             Modifier
                 .widthIn(max = 300.dp)
                 .clip(shape)
+                .then(if (highlighted) Modifier.border(2.dp, Color(0xFFF59E0B), shape) else Modifier)
                 .background(if (inbound) SurfaceWhite else OutboundBubble)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
