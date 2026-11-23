@@ -438,8 +438,14 @@ data class McpStatus(
     val enabled: Boolean = false,
     val endpoint: String = "",
     val authentication: String = "",
-    val tools: List<String> = emptyList(),
+    val tools: List<McpTool> = emptyList(),
     @SerialName("last_access_at") val lastAccessAt: String? = null,
+)
+
+@Serializable
+data class McpTool(
+    val name: String = "",
+    @SerialName("read_only") val readOnly: Boolean = false,
 )
 
 @Serializable

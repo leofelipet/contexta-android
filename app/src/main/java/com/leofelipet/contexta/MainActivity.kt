@@ -3405,8 +3405,8 @@ private fun McpPane(api: Api, prefs: Prefs, onUnauthorized: () -> Unit) {
                 Text("Ferramentas", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
             }
             if (mcp.tools.isEmpty()) item { Text("Nenhuma ferramenta.", color = Muted, modifier = Modifier.padding(16.dp)) }
-            items(mcp.tools, key = { it }) { tool ->
-                Text(tool, color = Ink, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            items(mcp.tools, key = { it.name }) { tool ->
+                Text(if (tool.readOnly) tool.name else "${tool.name} · escrita", color = Ink, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 HorizontalDivider(color = Line)
             }
         }
