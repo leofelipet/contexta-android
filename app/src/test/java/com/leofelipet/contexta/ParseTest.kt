@@ -127,9 +127,9 @@ class ParseTest {
         assertEquals("Leo", wa.instance.profileName)
         assertTrue(wa.connection.loggedIn)
         val mcp = contextaJson.decodeFromString<McpStatus>(
-            """{"enabled":true,"endpoint":"/mcp","authentication":"bearer","tools":["list_tasks"]}""",
+            """{"enabled":true,"endpoint":"/mcp","authentication":"bearer","tools":[{"name":"list_tasks","description":"x","read_only":true}]}""",
         )
-        assertEquals("list_tasks", mcp.tools.single())
+        assertEquals(McpTool("list_tasks", readOnly = true), mcp.tools.single())
         val mail = contextaJson.decodeFromString<EmailTestResult>(
             """{"imap_ok":true,"smtp_ok":false,"smtp_error":"auth"}""",
         )
